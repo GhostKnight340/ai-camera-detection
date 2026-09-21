@@ -56,24 +56,32 @@ Then open http://localhost:8000/
 - `motion.html` detects movement only — anything that moves triggers it.
 - Prototypes: single camera, no persistence, not tested over long runs.
 
-## MoViNet (optional second detector)
+## Trained gesture classifier
 
-`index.html` can also run **MoViNet-A0**, a real trained Kinetics-600 video
-classifier, alongside the geometry heuristics. It loads on demand — the
-16 MB model is not downloaded unless you press the button.
+Press **Gestures** to load MediaPipe's `GestureRecognizer` — Google's
+production-trained model, 8 MB, real confidences, full frame rate. It reports
+seven categories: thumb up, thumb down, open palm, closed fist, victory,
+pointing up, I-love-you. Hand skeletons are drawn on the feed.
 
-- weights: `litert-community/MoViNet-A0-Stream-LiteRT` (Hugging Face, CORS-enabled)
-- runtime: `@tensorflow/tfjs-tflite` (WASM), labels in `kinetics600.txt`
-- measured inference: ~22 ms per frame, driven at ~10 Hz
+It is dependable for one specific reason: **it is trained on exactly the
+categories it reports.**
 
-### Why its temporal state is held at zero
+## Why no Kinetics model is used
 
-`probe.html` dumps the model signature. It takes **47 inputs** — the image
-`[1,3,172,172]` in NCHW, plus 46 state tensors — and returns **28 outputs**:
-a `[1,600]` head plus only 27 state tensors.
+MoViNet-A0 was integrated and then removed. Two independent problems:
 
-The 16 cumulative-pool states (`[1,C,1,1]`) pair 1:1 with their outputs by
-shape and order. The spatial buffers do not:
+**1. The label set is wrong for posture.** Kinetics-400 and Kinetics-600
+contain no plain `walking`, `standing` or `sitting` class. The nearest entries
+are `walking the dog`, `walking through snow`, `jaywalking`, `moon walking`,
+`standing on hands`, `squat`. A Kinetics classifier asked "is this person
+standing or walking" must answer from 600 unrelated activities, so it is
+confidently wrong by construction. Swapping in a stronger Kinetics model
+(TimeSformer, ViViT, VideoMAE) does not change this.
+
+**2. The streaming build's state wiring is not recoverable.** It takes 47
+inputs — image `[1,3,172,172]` NCHW plus 46 state tensors — and returns 28
+outputs: a `[1,600]` head plus only 27 state tensors. The 16 cumulative-pool
+states pair 1:1 by shape and order. The spatial buffers do not:
 
 | shape | inputs | outputs |
 |---|---|---|
@@ -83,18 +91,24 @@ shape and order. The spatial buffers do not:
 | `[1,384,6,6]`   | 4  | 1 |
 
 16 against 6 is not an integer ratio, so blocks carry different buffer depths
-and the correct wiring cannot be recovered from shapes alone. Feeding state
-back wrongly does not raise an error — it yields confident nonsense — so state
-is held at zero, which is exactly the condition the model sees on a stream's
-first frame. Temporal stability comes from averaging predictions over a
-window instead.
+and the wiring cannot be derived from shapes. Wrong feedback does not raise an
+error, it yields confident nonsense.
 
-To get true streaming behaviour you need the original model definition to
-recover the buffer layout, then feed each output back to its matching input.
+Measured, for the record: loads in ~3 s, inference ~22 ms via
+`@tensorflow/tfjs-tflite`, weights from `litert-community/MoViNet-A0-Stream-LiteRT`.
+Note also that `tfhub.dev` is fully sunset — every URL now redirects to a
+Kaggle search page, and Kaggle model downloads need auth and send no CORS.
 
-### What to expect
+## The right model for posture, and why it is not here
 
-Kinetics-600 is everyday activity — "playing guitar", "eating cake". Without
-temporal state the classifier leans on scene appearance, so it is weakest at
-exactly the distinctions the pose heuristics handle well (standing vs walking).
-Treat it as a comparison baseline, not a replacement.
+The correct taxonomy is **NTU RGB+D 60/120**: walking, sitting down, standing
+up, falling down, staggering, picking up, throwing. The credible pretrained
+weights are ST-GCN++ and PoseC3D in [MMAction2](https://github.com/open-mmlab/mmaction2),
+as PyTorch checkpoints. They consume pose keypoints — which this page already
+produces — so the integration is natural, but they must be exported to ONNX
+first and run through `onnxruntime-web`. Searching Hugging Face for
+ready-made ONNX skeleton-action models returns only zero-download hobby
+uploads; nothing credible is browser-ready today.
+
+Until that export exists, posture stays on the geometry heuristics, which are
+built on MediaPipe Pose — itself a proven production model.
