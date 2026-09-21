@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoViNet Probe</title>
+<style>
+  body{margin:0;padding:16px;background:#0B0F14;color:#D7E0E8;
+       font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{white-space:pre-wrap;word-break:break-word;margin:0}
+  .ok{color:#4ADE80}.bad{color:#F2555A}.dim{color:#7C8C9C}
+</style>
+</head>
+<body>
+<pre id="log">starting…</pre>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/dist/tf-tflite.min.js"></script>
+<script>
+const el = document.getElementById('log');
+const out = [];
+function log(s, cls){ out.push(cls?`<span class="${cls}">${s}</span>`:s); el.innerHTML = out.join('\n'); }
+window.__probe = {done:false};
+
+(async () => {
+  try{
+    log('tf            ' + (window.tf ? tf.version.tfjs : 'MISSING'), window.tf?'ok':'bad');
+    log('tflite ns     ' + (window.tflite ? 'present' : 'MISSING'), window.tflite?'ok':'bad');
+    if(!window.tflite) throw new Error('tflite namespace missing');
+
+    tflite.setWasmPath('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/wasm/');
+    log('wasm path set');
+
+    const URL='https://huggingface.co/litert-community/MoViNet-A0-Stream-LiteRT/resolve/main/movinet_a0_stream.tflite';
+    log('fetching model (15 MB)…','dim');
+    const t0=performance.now();
+    const model = await tflite.loadTFLiteModel(URL);
+    log('LOADED in ' + Math.round(performance.now()-t0) + ' ms','ok');
+
+    const fmt = t => `${String(t.name).slice(0,46).padEnd(46)} ${String(t.dtype).padEnd(8)} [${(t.shape||[]).join(',')}]`;
+    log('\ninputs  (' + model.inputs.length + ')');
+    model.inputs.forEach((t,i)=>log('  '+String(i).padStart(2)+' '+fmt(t)));
+    log('\noutputs (' + model.outputs.length + ')');
+    model.outputs.forEach((t,i)=>log('  '+String(i).padStart(2)+' '+fmt(t)));
+
+    // one dummy pass, feeding zeros for every input
+    log('\nrunning one inference with zero inputs…','dim');
+    const feeds = model.inputs.map(t=>tf.zeros(
+      (t.shape||[]).map(d=>(d==null||d<0)?1:d), t.dtype==='int32'?'int32':'float32'));
+    const t1=performance.now();
+    let res = model.predict(feeds.length===1 ? feeds[0] : feeds);
+    const ms = performance.now()-t1;
+    const arr = Array.isArray(res) ? res : (res && res.shape ? [res] : Object.values(res||{}));
+    log('INFERENCE OK in ' + Math.round(ms) + ' ms, ' + arr.length + ' outputs','ok');
+    const logits = arr.find(t=>t.shape && t.shape[t.shape.length-1]===600);
+    log('600-class head found: ' + (logits ? 'YES shape [' + logits.shape.join(',') + ']' : 'NO'),
+        logits?'ok':'bad');
+
+    feeds.forEach(t=>t.dispose());
+    window.__probe = {done:true, ok:true,
+      inputs:model.inputs.map(t=>({n:t.name,s:t.shape,d:t.dtype})),
+      outputs:model.outputs.map(t=>({n:t.name,s:t.shape,d:t.dtype})),
+      ms:Math.round(ms), has600:!!logits};
+  }catch(e){
+    log('\nFAILED: ' + (e && e.message ? e.message : e),'bad');
+    console.error(e);
+    window.__probe = {done:true, ok:false, error:String(e && e.message || e)};
+  }
+})();
+</script>
+</body>
+</html>
