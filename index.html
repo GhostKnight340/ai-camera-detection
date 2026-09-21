@@ -364,30 +364,40 @@ function angleAt(a,b,c){
   return Math.acos(clamp((abx*cbx+aby*cby)/m,-1,1))*180/Math.PI;
 }
 
+// MediaPipe extrapolates landmarks past the edge of the picture and keeps
+// their visibility moderately high, so visibility alone reports knees that
+// are actually below the bottom of the frame. Bounds must be checked too.
+function inShot(l){
+  const v=(l.visibility===undefined?1:l.visibility);
+  return v>0.5 && l.x>-0.02 && l.x<1.02 && l.y>-0.02 && l.y<1.02;
+}
 function partsOf(lm){
-  const v=i=>(lm[i].visibility===undefined?1:lm[i].visibility);
-  const hips =(v(HIP_L)+v(HIP_R))/2 > 0.5;
-  const knees=(v(KN_L)+v(KN_R))/2 > 0.5;
+  const hips = inShot(lm[HIP_L])||inShot(lm[HIP_R]);
+  const knees= inShot(lm[KN_L]) ||inShot(lm[KN_R]);
   return {hips, knees, lower: hips&&knees};
 }
 
+// Speed is expressed in torso lengths per second, so it does not change
+// when the subject is nearer or further from the camera.
+function bodyScale(lm, ar, parts){
+  const shL=P(lm[SH_L],ar), shR=P(lm[SH_R],ar), sh=mid(shL,shR);
+  if(parts.hips){
+    const hip=mid(P(lm[HIP_L],ar),P(lm[HIP_R],ar));
+    return Math.max(1e-4,Math.hypot(sh.x-hip.x, sh.y-hip.y));
+  }
+  return Math.max(1e-4,Math.hypot(shL.x-shR.x, shL.y-shR.y)*1.45);
+}
+
 // ---- action scoring ----------------------------------------------------
-function classify(lm, ar, speed, parts){
+// `motion` is already a 0..1 score combining travel, scale change and gait.
+function classify(lm, ar, motion, parts, torsoLen){
   const p=i=>P(lm[i],ar);
   const shL=p(SH_L), shR=p(SH_R), elL=p(EL_L), elR=p(EL_R),
         wrL=p(WR_L), wrR=p(WR_R), nose=p(NOSE);
   const sh=mid(shL,shR);
-  const shoulderW=Math.max(1e-4,Math.hypot(shL.x-shR.x, shL.y-shR.y));
-
-  // Without hips there is no shoulder-to-hip span, so fall back to a
-  // shoulder-width multiple. Every scaled measure below depends on this.
-  let hip=null, torsoLen;
-  if(parts.hips){
-    hip=mid(p(HIP_L),p(HIP_R));
-    torsoLen=Math.max(1e-4,Math.hypot(sh.x-hip.x, sh.y-hip.y));
-  }else{
-    torsoLen=shoulderW*1.45;
-  }
+  // Without hips there is no shoulder-to-hip span; bodyScale() already
+  // substituted a shoulder-width multiple. Every scaled measure uses it.
+  const hip = parts.hips ? mid(p(HIP_L),p(HIP_R)) : null;
 
   const raw={};
 
@@ -410,7 +420,7 @@ function classify(lm, ar, speed, parts){
   const roll=Math.abs(Math.atan2(shL.y-shR.y, shL.x-shR.x))*180/Math.PI;
   raw['Leaning']=ramp(Math.min(roll,180-roll),10,32);
 
-  if(parts.lower){
+  if(parts.lower && hip){
     const hipL=p(HIP_L), hipR=p(HIP_R), knL=p(KN_L), knR=p(KN_R),
           anL=p(AN_L), anR=p(AN_R), kn=mid(knL,knR);
     const torsoTilt=Math.abs(Math.atan2(sh.x-hip.x, hip.y-sh.y))*180/Math.PI;
@@ -430,14 +440,14 @@ function classify(lm, ar, speed, parts){
     raw['Bending over'] = bend*(1-horizontal)*(1-crouch);
     raw['Sitting']      = crouch*upright*hipsAtKnee;
     raw['Crouching']    = crouch*upright*(1-hipsAtKnee);
-    raw['Walking']      = ramp(speed,0.05,0.30)*upright*(1-crouch);
-    raw['Standing']     = upright*(1-crouch)*(1-ramp(speed,0.04,0.16));
+    raw['Walking']      = motion*upright*(1-crouch);
+    raw['Standing']     = upright*(1-crouch)*(1-motion);
   }else{
     // No reliable legs — report only what the upper body supports.
     const busy=Math.max(raw['Arms raised'],raw['One arm raised'],
                         raw['Reaching out'],raw['Hand to head'],raw['Leaning']);
-    raw['Moving'] = ramp(speed,0.05,0.28);
-    raw['Still']  = (1-ramp(speed,0.03,0.15))*(1-busy);
+    raw['Moving'] = motion;
+    raw['Still']  = (1-motion)*(1-busy);
   }
   return raw;
 }
@@ -447,9 +457,10 @@ function track(lmSets, ar, t){
   const out=[], used=new Set();
 
   for(const rawLm of lmSets){
-    const p0=partsOf(rawLm);
-    const aRaw = p0.hips ? mid(P(rawLm[HIP_L],ar),P(rawLm[HIP_R],ar))
-                         : mid(P(rawLm[SH_L],ar),P(rawLm[SH_R],ar));
+    // Always the shoulder midpoint. Switching anchor on hip visibility made
+    // it teleport between chest and waist whenever hips flickered, which read
+    // as a large velocity and pinned the label to Walking.
+    const aRaw = mid(P(rawLm[SH_L],ar),P(rawLm[SH_R],ar));
 
     let tr=null, bestD=0.30;
     for(const c of tracks){
@@ -458,8 +469,8 @@ function track(lmSets, ar, t){
       if(d<bestD){ bestD=d; tr=c; }
     }
     if(!tr){
-      tr={id:nextId++, anchor:aRaw, t, speed:0, sm:null, sc:{}, shown:{},
-          label:null, cand:null, candAt:t, since:t};
+      tr={id:nextId++, anchor:aRaw, t, motion:undefined, sm:null, sc:{}, shown:{},
+          hist:[], lowerConf:null, label:null, cand:null, candAt:t, since:t};
       tracks.push(tr);
     }
     used.add(tr.id);
@@ -479,16 +490,66 @@ function track(lmSets, ar, t){
         s.visibility+=(rv-s.visibility)*0.25;
       }
     }
-    const lm=tr.sm, parts=partsOf(lm);
+    const lm=tr.sm, seen=partsOf(lm);
 
-    const anchor = parts.hips ? mid(P(lm[HIP_L],ar),P(lm[HIP_R],ar))
-                              : mid(P(lm[SH_L],ar),P(lm[SH_R],ar));
-    const vRaw=Math.hypot(anchor.x-tr.anchor.x, anchor.y-tr.anchor.y)/dt;
-    tr.speed=tr.speed*0.75+vRaw*0.25;
+    // Hold the full-body/upper-body decision steady rather than letting one
+    // marginal frame swap the whole action set.
+    const lowNow = seen.lower?1:0;
+    tr.lowerConf = tr.lowerConf===null ? lowNow : tr.lowerConf+(lowNow-tr.lowerConf)*0.12;
+    const parts = {hips:seen.hips, knees:seen.knees, lower:tr.lowerConf>0.5};
+
+    const torsoLen = bodyScale(lm, ar, parts);
+    const anchor = mid(P(lm[SH_L],ar),P(lm[SH_R],ar));
+
+    // Limb positions relative to the body centre, in torso units, so they are
+    // unaffected by where the person is or how near the camera they stand.
+    const rel=i=>{ const q=P(lm[i],ar);
+      return [(q.x-anchor.x)/torsoLen, (q.y-anchor.y)/torsoLen]; };
+    tr.hist.push({t, x:anchor.x, y:anchor.y, scale:torsoLen,
+      lim: parts.lower ? [rel(AN_L),rel(AN_R),rel(KN_L),rel(KN_R)] : null});
+    while(tr.hist.length>1 && t-tr.hist[0].t>700) tr.hist.shift();
+    const h0=tr.hist[0], span=(t-h0.t)/1000;
+
+    // Cue 1 - travel across the picture, over a window rather than frame to
+    // frame. Jitter is zero-mean and cancels over the window; dividing a
+    // per-frame wobble by a 33ms dt did the exact opposite.
+    const vTrans = span>=0.20
+      ? (Math.hypot(anchor.x-h0.x, anchor.y-h0.y)/span)/torsoLen : 0;
+
+    // Cue 2 - the body growing or shrinking. Someone walking straight at the
+    // camera barely translates at all, so cue 1 alone reports them as still.
+    const vScale = span>=0.20
+      ? Math.abs(Math.log(torsoLen/Math.max(1e-6,h0.scale)))/span : 0;
+
+    // Cue 3 - how far the legs swing. Amplitude (range over the window), not
+    // accumulated path length, because path length sums up jitter too.
+    let gaitAmp=0;
+    const withLim=tr.hist.filter(h=>h.lim);
+    if(parts.lower && withLim.length>3){
+      let sum=0;
+      for(let j=0;j<4;j++){
+        let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+        for(const h of withLim){
+          const q=h.lim[j];
+          if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
+          if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1];
+        }
+        sum+=Math.hypot(mxx-mnx, mxy-mny);
+      }
+      gaitAmp=sum/4;
+    }
+
+    // Each cue mapped to 0..1 and combined by strongest, so any one of them
+    // is enough to call motion.
+    const motionNow=Math.max(
+      ramp(vTrans ,0.35,1.20),
+      ramp(vScale ,0.12,0.45),
+      parts.lower ? ramp(gaitAmp,0.28,0.80) : 0);
+    tr.motion = tr.motion===undefined ? motionNow : tr.motion+(motionNow-tr.motion)*0.30;
     tr.anchor=anchor; tr.t=t;
 
     // smooth each score so the percentages stop twitching
-    const raw=classify(lm, ar, tr.speed, parts);
+    const raw=classify(lm, ar, tr.motion, parts, torsoLen);
     for(const k in raw){
       const prev = tr.sc[k]===undefined ? raw[k] : tr.sc[k];
       tr.sc[k] = prev + (raw[k]-prev)*0.18;
@@ -523,7 +584,7 @@ function track(lmSets, ar, t){
     if(tr.sc['Reaching out']>0.5) flags.push('Reaching');
     if(tr.sc['Hand to head']>0.5) flags.push('Hand to head');
     if(tr.sc['Leaning']>0.5) flags.push('Leaning');
-    if(tr.speed>0.09) flags.push('Moving');
+    if(tr.motion>0.50) flags.push('Moving');
 
     out.push({lm, id:tr.id, label:tr.label, since:tr.since, display, flags, parts});
   }
@@ -578,10 +639,11 @@ function draw(){
   const f=fitRect(W,H,vidAR);
 
   for(const p of people){
-    const pts=p.lm.map(l=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h, v:l.visibility}));
+    const pts=p.lm.map(l=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h, v:l.visibility,
+                            ok:l.visibility>VIS && inShot(l)}));
 
     let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
-    for(const q of pts){ if(q.v<VIS) continue;
+    for(const q of pts){ if(!q.ok) continue;
       if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
     if(x1<x0) continue;
     const padX=(x1-x0)*0.14, padY=(y1-y0)*0.07;
@@ -592,12 +654,12 @@ function draw(){
       const scale=Math.max(3,Math.min(16,(y1-y0)*0.045));
       ctx.lineCap='round'; ctx.lineJoin='round';
       for(const [a,b,col] of BONES){
-        if(pts[a].v<VIS||pts[b].v<VIS) continue;   // partial bodies draw what they have
+        if(!pts[a].ok||!pts[b].ok) continue;   // partial bodies draw what they have
         ctx.strokeStyle=col; ctx.globalAlpha=.82; ctx.lineWidth=scale;
         ctx.beginPath(); ctx.moveTo(pts[a].x,pts[a].y); ctx.lineTo(pts[b].x,pts[b].y); ctx.stroke();
       }
-      if(pts[NOSE].v>VIS){
-        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.v>VIS);
+      if(pts[NOSE].ok){
+        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.ok);
         const rad=ears.length===2
           ? Math.max(scale*1.1,Math.hypot(ears[0].x-ears[1].x,ears[0].y-ears[1].y)*0.62)
           : scale*1.5;
