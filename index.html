@@ -872,95 +872,231 @@ function size(){
 }
 window.addEventListener('resize',size); size();
 
+// ---- render state ------------------------------------------------------
+// Detection updates at video rate, and slower still when inference lags, while
+// the display runs at 60fps — so drawing the raw result steps visibly. Every
+// drawn quantity is instead eased toward its target once per animation frame.
+// The easing is time-based rather than per-frame, so it behaves identically at
+// any frame rate, and it trades a little latency for a lot of smoothness.
+const rstate=new Map();
+let hstate=[], lastDraw=0;
+const TAU_POS=0.060, TAU_BOX=0.075, TAU_VAL=0.110,
+      TAU_IN=0.130, TAU_OUT=0.200, TAU_HAND=0.045;
+const ease=(dt,tau)=>1-Math.exp(-dt/tau);
+
+function rrect(c,x,y,w,h,rad){
+  c.beginPath();
+  if(c.roundRect){ c.roundRect(x,y,w,h,rad); return; }
+  const r=Math.max(0,Math.min(rad,w/2,h/2));
+  c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
+  c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath();
+}
+
+function syncPeople(dt){
+  const kP=ease(dt,TAU_POS), kB=ease(dt,TAU_BOX), kV=ease(dt,TAU_VAL);
+  const live=new Set();
+  for(const pr of people){
+    if(!pr.box) continue;
+    live.add(pr.id);
+    let r=rstate.get(pr.id);
+    if(!r){
+      r={pts:new Float32Array(pr.lm.length*2), vis:new Float32Array(pr.lm.length),
+         box:{x0:pr.box.x0,y0:pr.box.y0,x1:pr.box.x1,y1:pr.box.y1},
+         alpha:0, disp:[], lower:pr.parts.lower};
+      for(let n=0;n<pr.lm.length;n++){
+        r.pts[n*2]=pr.lm[n].x; r.pts[n*2+1]=pr.lm[n].y; r.vis[n]=pr.vset[n];
+      }
+      rstate.set(pr.id,r);
+    }else{
+      for(let n=0;n<pr.lm.length;n++){
+        r.pts[n*2]   += (pr.lm[n].x   - r.pts[n*2])*kP;
+        r.pts[n*2+1] += (pr.lm[n].y   - r.pts[n*2+1])*kP;
+        // easing visibility means bones fade rather than pop in and out
+        r.vis[n]     += (pr.vset[n]   - r.vis[n])*kV;
+      }
+      r.box.x0+=(pr.box.x0-r.box.x0)*kB; r.box.x1+=(pr.box.x1-r.box.x1)*kB;
+      r.box.y0+=(pr.box.y0-r.box.y0)*kB; r.box.y1+=(pr.box.y1-r.box.y1)*kB;
+    }
+    r.lower=pr.parts.lower;
+    // ease the printed percentages too, so the digits stop twitching
+    const next=pr.display.map(d=>({name:d[0], val:d[1]}));
+    for(let n=0;n<next.length;n++){
+      const prev=r.disp[n];
+      if(prev && prev.name===next[n].name) next[n].val = prev.val+(next[n].val-prev.val)*kV;
+    }
+    r.disp=next;
+    r.alpha += (1-r.alpha)*ease(dt,TAU_IN);
+  }
+  for(const [id,r] of rstate){
+    if(live.has(id)) continue;
+    r.alpha += (0-r.alpha)*ease(dt,TAU_OUT);   // fade out instead of vanishing
+    if(r.alpha<0.02) rstate.delete(id);
+  }
+}
+
+function syncHands(dt){
+  const k=ease(dt,TAU_HAND), kIn=ease(dt,TAU_IN), kOut=ease(dt,TAU_OUT);
+  for(let i=0;i<hands.length;i++){
+    const src=hands[i].lm;
+    let h=hstate[i];
+    if(!h || h.n!==src.length){
+      h={n:src.length, p:new Float32Array(src.length*2), a:0};
+      for(let j=0;j<src.length;j++){ h.p[j*2]=src[j].x; h.p[j*2+1]=src[j].y; }
+      hstate[i]=h;
+    }else{
+      for(let j=0;j<src.length;j++){
+        h.p[j*2]   += (src[j].x - h.p[j*2])*k;
+        h.p[j*2+1] += (src[j].y - h.p[j*2+1])*k;
+      }
+    }
+    h.a += (1-h.a)*kIn;
+  }
+  for(let i=hands.length;i<hstate.length;i++){
+    if(hstate[i]) hstate[i].a += (0-hstate[i].a)*kOut;
+  }
+  while(hstate.length>hands.length && hstate.length &&
+        (!hstate[hstate.length-1] || hstate[hstate.length-1].a<0.02)) hstate.pop();
+}
+
 function draw(){
-  const r=frame.getBoundingClientRect(), W=r.width, H=r.height;
+  const rect=frame.getBoundingClientRect(), W=rect.width, H=rect.height;
   ctx.clearRect(0,0,W,H);
-  if(!running) return;
+  const now=performance.now();
+  const dt=Math.min(0.1, lastDraw ? (now-lastDraw)/1000 : 0.016);
+  lastDraw=now;
+  if(!running){ rstate.clear(); hstate.length=0; return; }
+
   const sans=getComputedStyle(document.body).getPropertyValue('--sans');
   const mono=getComputedStyle(document.body).getPropertyValue('--mono');
   const f=fitRect(W,H,vidAR);
+  syncPeople(dt);
+  if(gestOn) syncHands(dt); else if(hstate.length) hstate.length=0;
 
-  for(const p of people){
-    const pts=p.lm.map((l,i)=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h,
-                                v:l.visibility, ok:p.vset[i]===1}));
+  for(const [,r] of rstate){
+    const A=r.alpha;
+    const px=n=>f.ox+r.pts[n*2]*f.w, py=n=>f.oy+r.pts[n*2+1]*f.h;
 
-    if(!p.box) continue;
-    let x0=f.ox+p.box.x0*f.w, x1=f.ox+p.box.x1*f.w,
-        y0=f.oy+p.box.y0*f.h, y1=f.oy+p.box.y1*f.h;
+    let x0=f.ox+r.box.x0*f.w, x1=f.ox+r.box.x1*f.w,
+        y0=f.oy+r.box.y0*f.h, y1=f.oy+r.box.y1*f.h;
     const padX=(x1-x0)*0.14, padY=(y1-y0)*0.07;
-    x0=Math.max(f.ox,x0-padX); x1=Math.min(f.ox+f.w,x1+padX);
-    y0=Math.max(f.oy,y0-padY*2.2); y1=Math.min(f.oy+f.h,y1+padY);
+    x0=Math.max(f.ox,x0-padX);        x1=Math.min(f.ox+f.w,x1+padX);
+    y0=Math.max(f.oy,y0-padY*2.2);    y1=Math.min(f.oy+f.h,y1+padY);
+    const bw=Math.max(1,x1-x0), bh=Math.max(1,y1-y0);
 
     if(showSkel){
-      const scale=Math.max(3,Math.min(16,(y1-y0)*0.045));
+      const wBone=Math.max(3,Math.min(15,bh*0.042));
       ctx.lineCap='round'; ctx.lineJoin='round';
-      for(const [a,b,col] of BONES){
-        if(!pts[a].ok||!pts[b].ok) continue;   // partial bodies draw what they have
-        ctx.strokeStyle=col; ctx.globalAlpha=.82; ctx.lineWidth=scale;
-        ctx.beginPath(); ctx.moveTo(pts[a].x,pts[a].y); ctx.lineTo(pts[b].x,pts[b].y); ctx.stroke();
+      // a wide soft underlay then the solid bone: depth without shadowBlur,
+      // which is far too expensive to run per stroke every frame
+      for(let pass=0;pass<2;pass++){
+        ctx.lineWidth = pass ? wBone : wBone*2.2;
+        for(const [a,b,col] of BONES){
+          const v=Math.min(r.vis[a],r.vis[b]);
+          if(v<0.05) continue;
+          ctx.globalAlpha=A*v*(pass?0.92:0.16);
+          ctx.strokeStyle=col;
+          ctx.beginPath(); ctx.moveTo(px(a),py(a)); ctx.lineTo(px(b),py(b)); ctx.stroke();
+        }
       }
-      if(pts[NOSE].ok){
-        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.ok);
-        const rad=ears.length===2
-          ? Math.max(scale*1.1,Math.hypot(ears[0].x-ears[1].x,ears[0].y-ears[1].y)*0.62)
-          : scale*1.5;
-        ctx.globalAlpha=.8; ctx.fillStyle='#FF4FD8';
-        ctx.beginPath(); ctx.arc(pts[NOSE].x,pts[NOSE].y-rad*0.18,rad,0,Math.PI*2); ctx.fill();
+      if(r.vis[NOSE]>0.05){
+        const both=r.vis[EAR_L]>0.3 && r.vis[EAR_R]>0.3;
+        const rad=both
+          ? Math.max(wBone*1.1, Math.hypot(px(EAR_L)-px(EAR_R), py(EAR_L)-py(EAR_R))*0.62)
+          : wBone*1.5;
+        ctx.globalAlpha=A*r.vis[NOSE]*0.18; ctx.fillStyle='#FF4FD8';
+        ctx.beginPath(); ctx.arc(px(NOSE),py(NOSE)-rad*0.18,rad*1.5,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=A*r.vis[NOSE]*0.9;
+        ctx.beginPath(); ctx.arc(px(NOSE),py(NOSE)-rad*0.18,rad,0,Math.PI*2); ctx.fill();
       }
       ctx.globalAlpha=1;
     }
 
     if(showBox){
-      ctx.strokeStyle='#FF3B30'; ctx.lineWidth=2.5;
-      ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+      const rad=Math.max(4,Math.min(14,bw*0.10,bh*0.05));
+      ctx.fillStyle='#FF453A'; ctx.strokeStyle='#FF453A';
+      ctx.globalAlpha=A*0.045; rrect(ctx,x0,y0,bw,bh,rad); ctx.fill();
+      ctx.globalAlpha=A*0.42;  ctx.lineWidth=1.5;
+      rrect(ctx,x0,y0,bw,bh,rad); ctx.stroke();
 
-      // committed label first, so these no longer re-rank every frame
-      ctx.font='600 12px '+sans;
-      const lh=18;
-      let ly=y0-p.display.length*lh-2;
-      if(ly<f.oy) ly=Math.min(y1+4,f.oy+f.h-p.display.length*lh-2);
-      p.display.forEach((d,i)=>{
-        const text=d[0]+': '+(d[1]*100).toFixed(1)+'%';
-        const tw=ctx.measureText(text).width;
-        const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-tw-12));
-        ctx.fillStyle=i===0?'#2E6BFF':'#FF3B30';
-        ctx.fillRect(lx,ly,tw+12,lh);
-        ctx.fillStyle='#fff'; ctx.fillText(text,lx+6,ly+13);
-        ly+=lh;
+      // corner brackets carry the weight so the full outline can stay light
+      const cl=Math.max(6,Math.min(24,bw*0.20,bh*0.11));
+      ctx.globalAlpha=A; ctx.lineWidth=2.5; ctx.lineCap='round';
+      ctx.beginPath();
+      ctx.moveTo(x0,y0+rad+cl);  ctx.lineTo(x0,y0+rad);
+      ctx.moveTo(x0+rad,y0);     ctx.lineTo(x0+rad+cl,y0);
+      ctx.moveTo(x1-rad-cl,y0);  ctx.lineTo(x1-rad,y0);
+      ctx.moveTo(x1,y0+rad);     ctx.lineTo(x1,y0+rad+cl);
+      ctx.moveTo(x1,y1-rad-cl);  ctx.lineTo(x1,y1-rad);
+      ctx.moveTo(x1-rad,y1);     ctx.lineTo(x1-rad-cl,y1);
+      ctx.moveTo(x0+rad+cl,y1);  ctx.lineTo(x0+rad,y1);
+      ctx.moveTo(x0,y1-rad);     ctx.lineTo(x0,y1-rad-cl);
+      ctx.stroke();
+
+      const lh=21, gap=5;
+      let ly=y0-r.disp.length*(lh+gap);
+      if(ly<f.oy+2) ly=Math.min(y1+gap, f.oy+f.h-r.disp.length*(lh+gap)-2);
+      r.disp.forEach((d,n)=>{
+        const pct=(d.val*100).toFixed(1)+'%';
+        ctx.font='600 12px '+sans;  const tw=ctx.measureText(d.name).width;
+        ctx.font='500 11px '+mono;  const pw=ctx.measureText(pct).width;
+        const total=tw+pw+24;
+        const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-total));
+        ctx.globalAlpha=A;
+        ctx.fillStyle = n===0 ? '#2E6BFF' : '#FF453A';
+        rrect(ctx,lx,ly,total,lh,6); ctx.fill();
+        ctx.fillStyle='#fff';
+        ctx.font='600 12px '+sans; ctx.fillText(d.name,lx+9,ly+14.5);
+        ctx.globalAlpha=A*0.78;
+        ctx.font='500 11px '+mono; ctx.fillText(pct,lx+tw+15,ly+14.5);
+        ly+=lh+gap;
       });
 
-      if(!p.parts.lower){
-        ctx.font='600 9px '+mono;
-        ctx.fillStyle='#F5A524';
-        ctx.fillText('UPPER BODY',x0+1,Math.min(f.oy+f.h-3,y1+11));
+      if(!r.lower){
+        ctx.globalAlpha=A*0.9;
+        ctx.font='600 9px '+mono; ctx.fillStyle='#FBBF24';
+        ctx.fillText('UPPER BODY',x0+2,Math.min(f.oy+f.h-3,y1+12));
       }
+      ctx.globalAlpha=1;
     }
   }
 
   if(gestOn){
-    for(const h of hands){
-      const q=h.lm.map(l=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h}));
-      ctx.strokeStyle='#F5A524'; ctx.lineWidth=2; ctx.lineCap='round';
-      for(const [a,b] of HAND_BONES){
-        ctx.beginPath(); ctx.moveTo(q[a].x,q[a].y); ctx.lineTo(q[b].x,q[b].y); ctx.stroke();
+    for(let i=0;i<hstate.length;i++){
+      const h=hstate[i]; if(!h) continue;
+      const info=hands[i];
+      const hx=n=>f.ox+h.p[n*2]*f.w, hy=n=>f.oy+h.p[n*2+1]*f.h;
+      ctx.lineCap='round'; ctx.lineJoin='round';
+      for(let pass=0;pass<2;pass++){
+        ctx.lineWidth = pass ? 2.2 : 5.2;
+        ctx.globalAlpha = h.a*(pass?0.95:0.14);
+        ctx.strokeStyle='#FBBF24';
+        ctx.beginPath();
+        for(const [a,b] of HAND_BONES){ ctx.moveTo(hx(a),hy(a)); ctx.lineTo(hx(b),hy(b)); }
+        ctx.stroke();
       }
-      ctx.fillStyle='#F5A524';
-      for(const pt of q){ ctx.beginPath(); ctx.arc(pt.x,pt.y,2.6,0,Math.PI*2); ctx.fill(); }
-      if(h.name && h.name!=='None'){
-        const txt=h.name.toUpperCase()+'  '+(h.score*100).toFixed(0)+'%';
-        ctx.font='600 11px '+mono;
-        const tw=ctx.measureText(txt).width;
-        const lx=Math.min(Math.max(f.ox,q[0].x-tw/2), f.ox+f.w-tw-12);
-        const ly=Math.max(f.oy, Math.min(q[0].y+16, f.oy+f.h-20));
-        ctx.fillStyle='rgba(245,165,36,.94)'; ctx.fillRect(lx,ly,tw+12,18);
-        ctx.fillStyle='#231400'; ctx.fillText(txt,lx+6,ly+13);
+      ctx.globalAlpha=h.a*0.95; ctx.fillStyle='#FBBF24';
+      for(let n=0;n<h.n;n++){ ctx.beginPath(); ctx.arc(hx(n),hy(n),2.4,0,Math.PI*2); ctx.fill(); }
+      if(info && info.name && info.name!=='None'){
+        const txt=info.name, pct=(info.score*100).toFixed(0)+'%';
+        ctx.font='600 12px '+sans;  const tw=ctx.measureText(txt).width;
+        ctx.font='500 11px '+mono;  const pw=ctx.measureText(pct).width;
+        const total=tw+pw+24, lh=21;
+        const lx=Math.max(f.ox,Math.min(hx(0)-total/2, f.ox+f.w-total));
+        const ly=Math.max(f.oy,Math.min(hy(0)+16, f.oy+f.h-lh-2));
+        ctx.globalAlpha=h.a; ctx.fillStyle='#FBBF24';
+        rrect(ctx,lx,ly,total,lh,6); ctx.fill();
+        ctx.fillStyle='#231400';
+        ctx.font='600 12px '+sans; ctx.fillText(txt,lx+9,ly+14.5);
+        ctx.globalAlpha=h.a*0.72;
+        ctx.font='500 11px '+mono; ctx.fillText(pct,lx+tw+15,ly+14.5);
       }
+      ctx.globalAlpha=1;
     }
   }
 
   ctx.font='500 10px '+mono;
-  ctx.fillStyle='rgba(215,224,232,.8)';
-  ctx.fillText(Math.round(fps)+' FPS  ·  '+people.length+' TRACKED',8,H-9);
+  ctx.fillStyle='rgba(244,244,245,.72)';
+  ctx.fillText(Math.round(fps)+' FPS  ·  '+people.length+' TRACKED',10,f.oy+f.h-10);
 }
 
 const mmss=ms=>{const s=Math.max(0,Math.floor(ms/1000));
