@@ -95,14 +95,27 @@
   </div>
 
   <div class="note" id="note">
-    Le modèle (~4 Mo) est téléchargé une fois puis mis en cache. Tout tourne
+    Le modèle (~7 Mo) est téléchargé une fois puis mis en cache. Tout tourne
     <b>dans le navigateur</b> — aucune image ne quitte l'appareil.<br><a href="soustraction.html" style="color:#2ED3C6;text-decoration:none">&#8594; Version sans modele (soustraction de fond)</a>
   </div>
 </div>
 
+<script>
+  // A failed top-level import in a module script cannot be caught inside
+  // that module, so the page would otherwise hang on the loading message.
+  window.__vpWD = setTimeout(function () {
+    var h = document.getElementById("hint");
+    if (h && !h.hidden) {
+      h.innerHTML =
+        "<span class='err'>Le module MediaPipe est introuvable.<br>" +
+        "Vérifiez la connexion, ou un blocage de cdn.jsdelivr.net.</span>";
+    }
+  }, 20000);
+</script>
 <script type="module">
 import { FilesetResolver, ObjectDetector }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22";
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1";
+clearTimeout(window.__vpWD);
 
 const $ = id => document.getElementById(id);
 const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
@@ -120,7 +133,7 @@ let occupied=false, pending=null, pendingSince=0, stateSince=performance.now();
 // --- model --------------------------------------------------------------
 try{
   const fileset = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm");
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
   detector = await ObjectDetector.createFromOptions(fileset,{
     baseOptions:{
       modelAssetPath:"https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
