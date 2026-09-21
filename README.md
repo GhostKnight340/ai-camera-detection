@@ -1,39 +1,42 @@
-# Vigie Poste
+# AI Camera Detection
 
-Prototypes navigateur pour la detection de presence a un poste de travail,
-a partir de la camera d'un telephone. Aucune image ne quitte l'appareil.
+Two browser prototypes for detecting people in a camera frame, running
+entirely on-device. No video ever leaves the browser.
+
+Live: https://ghostknight340.github.io/ai-camera-detection/
 
 ## Pages
 
-| Fichier | Detection | Dependances |
+| File | Detection | Dependencies |
 |---|---|---|
-| `index.html` | MediaPipe EfficientDet-Lite0, classe `person` | modele ~4 Mo charge depuis un CDN |
-| `soustraction.html` | Soustraction de fond (CV classique) | aucune |
+| `index.html` | MediaPipe EfficientDet-Lite0, `person` class | ~7 MB model from a CDN, cached after first load |
+| `motion.html` | Background subtraction (classical CV) | none |
 
-## Logique commune
+## Shared logic
 
-Les deux pages partagent la partie qui compte reellement :
+Both pages share the part that actually matters:
 
-- **Zone poste** deplacable et redimensionnable (coordonnees normalisees)
-- **Anti-rebond de 2 s** : l'etat doit tenir avant de basculer
-- **Compteurs** : temps dans l'etat courant, arret cumule, nombre d'arrets
-- `soustraction.html` ajoute une **chronologie d'occupation** sur 3 minutes
+- **Detection zone**, draggable and resizable, in normalised coordinates
+- **2-second debounce** — state must hold before it flips, so it does not
+  flicker on brief movement
+- **Counters** — time in current state, cumulative clear time, event count
+- `motion.html` adds a 3-minute occupancy timeline
 
-En production, seul le detecteur change (YOLOX / RF-DETR sur un boitier
-Jetson en peripherie) ; la logique de zone et d'etat reste identique.
+Only the detector underneath would change in a real deployment; the zone
+and state logic stays as-is.
 
-## Utilisation
+## Running locally
 
-La camera exige `https://` ou `localhost`. En local :
+The camera API requires `https://` or `localhost`:
 
     python -m http.server 8000
 
-Puis ouvrir http://localhost:8000/
+Then open http://localhost:8000/
 
-## Limites connues
+## Known limits
 
-- `soustraction.html` detecte le **mouvement**, pas les personnes : un chariot
-  qui passe declenche aussi la zone. Suffisant pour une camera fixe sur un
-  poste fixe, pas pour une allee de circulation.
-- Prototype de demonstration : ni multi-camera, ni persistance, ni stabilite
-  eprouvee sur une journee complete.
+- `motion.html` detects **movement**, not people. Anything that moves
+  through the zone triggers it.
+- `index.html` detects people properly, but only presence — it does not
+  identify or track anyone across frames.
+- Prototypes only: single camera, no persistence, not tested for long runs.

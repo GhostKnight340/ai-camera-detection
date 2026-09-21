@@ -1,13 +1,16 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>
   :root{color-scheme:dark;padding-top:env(safe-area-inset-top,0px)}
   img{max-width:100%}
+  /* Author rules beat the UA default for [hidden]; .idlecard{display:flex}
+     would otherwise keep the overlay pinned over the video feed. */
   [hidden]{display:none!important}
-</style><title>Vigie Poste</title>
+</style>
+<title>Motion Detector</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
@@ -20,9 +23,9 @@
     --text:#D7E0E8;
     --dim:#7C8C9C;
     --accent:#2ED3C6;
-    --live:#4ADE80;
-    --idle:#F5A524;
-    --stop:#F2555A;
+    --on:#4ADE80;
+    --off:#F5A524;
+    --bad:#F2555A;
     --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -39,7 +42,6 @@
     padding-inline:16px;padding-block:0;
   }
 
-  /* ---- header ---- */
   header{
     display:flex;align-items:center;gap:10px;
     padding-block:14px 12px;border-bottom:1px solid var(--line);
@@ -53,10 +55,7 @@
     content:"";position:absolute;inset:6px;border-radius:1px;
     background:var(--accent);opacity:.55;
   }
-  h1{
-    font-size:15px;font-weight:600;margin:0;letter-spacing:.02em;
-    text-wrap:balance;
-  }
+  h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.02em;text-wrap:balance}
   .sub{
     font-family:var(--mono);font-size:10px;color:var(--dim);
     letter-spacing:.14em;text-transform:uppercase;margin-top:1px;
@@ -68,12 +67,11 @@
     flex:0 0 auto;
   }
   .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
-  .beacon.on .dot{background:var(--live);animation:pulse 2s ease-in-out infinite}
-  .beacon.on{color:var(--live)}
+  .beacon.on .dot{background:var(--on);animation:pulse 2s ease-in-out infinite}
+  .beacon.on{color:var(--on)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   @media (prefers-reduced-motion:reduce){.beacon.on .dot{animation:none}}
 
-  /* ---- viewfinder ---- */
   .stage{
     flex:1 1 auto;display:flex;align-items:center;justify-content:center;
     min-height:0;padding-block:12px;
@@ -97,15 +95,12 @@
       repeating-linear-gradient(135deg,transparent 0 11px,rgba(46,211,198,.028) 11px 22px),
       var(--panel);
   }
-  .idlecard p{
-    margin:0;max-width:34ch;color:var(--dim);font-size:13px;
-  }
+  .idlecard p{margin:0;max-width:34ch;color:var(--dim);font-size:13px}
   .idlecard .big{
     font-family:var(--mono);font-size:11px;letter-spacing:.16em;
     text-transform:uppercase;color:var(--accent);
   }
 
-  /* ---- readouts ---- */
   .readout{
     flex:0 0 auto;display:grid;gap:1px;
     grid-template-columns:repeat(4,1fr);
@@ -123,13 +118,12 @@
     font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:-.01em;
   }
   #tState .v{font-size:15px;font-weight:600;letter-spacing:.03em}
-  .v.live{color:var(--live)}.v.idle{color:var(--idle)}.v.none{color:var(--dim)}
+  .v.on{color:var(--on)}.v.off{color:var(--off)}.v.none{color:var(--dim)}
   @media (max-width:520px){
     .readout{grid-template-columns:repeat(2,1fr)}
     .tile .v{font-size:17px}
   }
 
-  /* ---- timeline ---- */
   .tl{flex:0 0 auto;margin-top:10px}
   .tl-head{
     display:flex;justify-content:space-between;align-items:baseline;
@@ -142,10 +136,9 @@
     border:1px solid var(--line);border-radius:3px;background:var(--panel);
   }
 
-  /* ---- controls ---- */
   .controls{
     flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
-    padding-block:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+    padding-block:12px;
   }
   button{
     font-family:var(--sans);font-size:13px;font-weight:500;
@@ -181,7 +174,7 @@
     padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
   }
   .note b{color:var(--text);font-weight:500}
-  .err{color:var(--stop)}
+  .err{color:var(--bad)}
 </style>
 </head>
 <body>
@@ -190,10 +183,10 @@
   <header>
     <div class="mark"></div>
     <div class="hgroup">
-      <h1>Vigie Poste</h1>
-      <div class="sub">Détection de présence · Poste 07</div>
+      <h1>Motion Detector</h1>
+      <div class="sub">Background subtraction &middot; no model</div>
     </div>
-    <div class="beacon" id="beacon"><span class="dot"></span><span id="beaconTxt">Hors ligne</span></div>
+    <div class="beacon" id="beacon"><span class="dot"></span><span id="beaconTxt">Offline</span></div>
   </header>
 
   <div class="stage">
@@ -201,40 +194,40 @@
       <video id="vid" playsinline muted autoplay></video>
       <canvas id="ov"></canvas>
       <div class="idlecard" id="idlecard">
-        <div class="big">Caméra inactive</div>
-        <p>Posez le téléphone face au poste de travail, puis démarrez. Le cadre bleu délimite la zone surveillée&nbsp;— déplacez-le, ou tirez son coin pour le redimensionner.</p>
+        <div class="big">Camera off</div>
+        <p>Point the camera at the area you want to watch, then start. The dashed box is the detection zone&nbsp;— drag it to move, or pull its corner to resize.</p>
       </div>
     </div>
   </div>
 
   <div class="readout">
-    <div class="tile" id="tState"><div class="k">État poste</div><div class="v none" id="vState">—</div></div>
-    <div class="tile"><div class="k">Depuis</div><div class="v none" id="vSince">--:--</div></div>
-    <div class="tile"><div class="k">Arrêt cumulé</div><div class="v none" id="vIdle">--:--</div></div>
-    <div class="tile"><div class="k">Arrêts</div><div class="v none" id="vStops">—</div></div>
+    <div class="tile" id="tState"><div class="k">Status</div><div class="v none" id="vState">&mdash;</div></div>
+    <div class="tile"><div class="k">For</div><div class="v none" id="vSince">--:--</div></div>
+    <div class="tile"><div class="k">Clear total</div><div class="v none" id="vIdle">--:--</div></div>
+    <div class="tile"><div class="k">Events</div><div class="v none" id="vStops">&mdash;</div></div>
   </div>
 
   <div class="tl">
     <div class="tl-head">
-      <span>Chronologie · 3 dernières minutes</span>
-      <span id="tlTag">Exemple</span>
+      <span>Timeline &middot; last 3 minutes</span>
+      <span id="tlTag">Example</span>
     </div>
     <canvas id="tlStrip"></canvas>
   </div>
 
   <div class="controls">
-    <button class="primary" id="btnStart">Démarrer la caméra</button>
-    <button id="btnBg" disabled>Recalibrer le fond</button>
-    <button id="btnFlip" disabled>Pivoter</button>
+    <button class="primary" id="btnStart">Start camera</button>
+    <button id="btnBg" disabled>Recalibrate</button>
+    <button id="btnFlip" disabled>Flip</button>
     <div class="slider">
-      <label for="sens">Sensibilité</label>
+      <label for="sens">Sensitivity</label>
       <input type="range" id="sens" min="1" max="10" step="1" value="5">
       <output id="sensOut">5</output>
     </div>
   </div>
 
   <div class="note" id="note">
-    Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil. La caméra exige une connexion HTTPS.
+    Detects <b>movement</b>, not people specifically. Nothing is downloaded and no video leaves the device.
   </div>
 </div>
 
@@ -263,6 +256,8 @@
       vStops=document.getElementById('vStops'),
       tlTag=document.getElementById('tlTag');
 
+  var BASE_NOTE='Detects <b>movement</b>, not people specifically. Nothing is downloaded and no video leaves the device.';
+
   // ---- detection grid -------------------------------------------------
   var GW=96, GH=72, N=GW*GH;
   var work=document.createElement('canvas'); work.width=GW; work.height=GH;
@@ -272,90 +267,93 @@
 
   // ---- state ----------------------------------------------------------
   var running=false, facing='environment', stream=null;
-  var DEBOUNCE=2000;                 // state must hold 2s before it flips
-  var occupied=false, pending=null, pendingSince=0, stateSince=0;
+  var DEBOUNCE=2000;
+  var present=false, pending=null, pendingSince=0, stateSince=0;
   var idleTotal=0, stops=0, started=0;
-  var events=[];                      // {t, occ}
+  var events=[];
   var box=null, zoneFill=0;
-  var lastProc=0, PROC_MS=80;         // ~12 Hz detection
+  var lastProc=0, PROC_MS=80;
   var fps=0, lastFrame=0;
   var demo=true;
 
-  // zone in normalised coords
   var zone={x:.28,y:.24,w:.44,h:.56};
 
   seedDemo();
 
-  // ---- camera ---------------------------------------------------------
   btnStart.addEventListener('click',function(){ running?stop():start(); });
   btnFlip.addEventListener('click',function(){
     facing=(facing==='environment')?'user':'environment';
     if(running){ stop(); start(); }
   });
-  btnBg.addEventListener('click',function(){ bg=null; flash('Fond recalibré'); });
+  btnBg.addEventListener('click',function(){ bg=null; flash('Background recalibrated'); });
   sens.addEventListener('input',function(){ sensOut.textContent=sens.value; });
 
   function start(){
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      return fail("Ce navigateur n'expose pas la caméra. Utilisez Chrome ou Safari en HTTPS.");
+      return fail('This browser does not expose a camera. Use Chrome or Safari over https.');
     }
-    btnStart.disabled=true; btnStart.textContent='Connexion…';
+    btnStart.disabled=true; btnStart.textContent='Connecting…';
     navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},
       audio:false
     }).then(onStream).catch(function(){
       navigator.mediaDevices.getUserMedia({video:true,audio:false})
         .then(onStream).catch(function(e){
-          btnStart.disabled=false; btnStart.textContent='Démarrer la caméra';
+          btnStart.disabled=false; btnStart.textContent='Start camera';
           fail(e&&e.name==='NotAllowedError'
-            ? "Accès refusé. Autorisez la caméra dans les réglages du navigateur, puis réessayez."
-            : "Aucune caméra accessible ("+(e&&e.name||'erreur')+").");
+            ? 'Camera access denied. Allow it in your browser settings and try again.'
+            : 'No camera available ('+((e&&e.name)||'error')+'). The camera needs https:// or localhost.');
         });
     });
   }
 
+  function resetGrid(){
+    var w=vid.videoWidth||4, h=vid.videoHeight||3;
+    frame.style.aspectRatio=w+'/'+h;
+    GH=Math.max(40,Math.round(GW*h/w));
+    N=GW*GH; work.height=GH;
+    cur=new Float32Array(N); mask=new Uint8Array(N); clean=new Uint8Array(N);
+    lab=new Int32Array(N); stack=new Int32Array(N); bg=null;
+    sizeOverlay();
+  }
+
   function onStream(s){
-    stream=s; vid.srcObject=s;
-    vid.play().catch(function(){});
-    vid.onloadedmetadata=function(){
-      var w=vid.videoWidth||4, h=vid.videoHeight||3;
-      frame.style.aspectRatio=w+'/'+h;
-      GH=Math.max(40,Math.round(GW*h/w));
-      N=GW*GH; work.height=GH;
-      cur=new Float32Array(N); mask=new Uint8Array(N); clean=new Uint8Array(N);
-      lab=new Int32Array(N); stack=new Int32Array(N); bg=null;
-      sizeOverlay();
-    };
+    stream=s;
+    // Attach the handler BEFORE srcObject, or metadata can fire first and be missed.
+    vid.onloadedmetadata=resetGrid;
+    vid.srcObject=s;
+    var p=vid.play();
+    if(p&&p.catch) p.catch(function(){});
+    if(vid.videoWidth) resetGrid();
+
     running=true; demo=false;
-    events=[]; idleTotal=0; stops=0; occupied=false; pending=null;
+    events=[]; idleTotal=0; stops=0; present=false; pending=null;
     started=performance.now(); stateSince=started;
     events.push({t:started,occ:false});
-    tlTag.textContent='En direct';
-    btnStart.disabled=false; btnStart.textContent='Arrêter';
+    tlTag.textContent='Live';
+    btnStart.disabled=false; btnStart.textContent='Stop';
     btnBg.disabled=false; btnFlip.disabled=false;
     idlecard.hidden=true;
-    beacon.classList.add('on'); beaconTxt.textContent='En direct';
-    note.innerHTML="Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil.";
-    flash('Calibrage du fond — laissez la zone vide 2 s');
+    beacon.classList.add('on'); beaconTxt.textContent='Live';
+    note.innerHTML=BASE_NOTE;
+    flash('Calibrating — keep the zone empty for 2s');
   }
 
   function stop(){
     running=false;
     if(stream){ stream.getTracks().forEach(function(t){t.stop();}); stream=null; }
     vid.srcObject=null; bg=null; box=null;
-    btnStart.textContent='Démarrer la caméra';
+    btnStart.textContent='Start camera';
     btnBg.disabled=true; btnFlip.disabled=true;
     idlecard.hidden=false;
-    beacon.classList.remove('on'); beaconTxt.textContent='Hors ligne';
+    beacon.classList.remove('on'); beaconTxt.textContent='Offline';
     octx.clearRect(0,0,ov.width,ov.height);
   }
 
   function fail(msg){ note.innerHTML='<span class="err">'+msg+'</span>'; }
   function flash(msg){
     note.innerHTML='<b>'+msg+'</b>';
-    setTimeout(function(){
-      if(running) note.innerHTML="Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil.";
-    },2600);
+    setTimeout(function(){ if(running) note.innerHTML=BASE_NOTE; },2600);
   }
 
   // ---- detection ------------------------------------------------------
@@ -369,13 +367,12 @@
     }
     if(!bg){ bg=Float32Array.from(cur); return; }
 
-    var thr=34-parseInt(sens.value,10)*2.6;      // sens 1..10  ->  31.4 .. 8
+    var thr=34-parseInt(sens.value,10)*2.6;
     for(var j=0;j<N;j++){
       var dv=cur[j]-bg[j]; if(dv<0) dv=-dv;
       mask[j]=dv>thr?1:0;
     }
 
-    // erode: keep a cell only if >=3 of its 8 neighbours also fired
     for(var y=0;y<GH;y++){
       for(var x=0;x<GW;x++){
         var k=y*GW+x;
@@ -392,7 +389,6 @@
       }
     }
 
-    // largest connected component -> bounding box
     lab.fill(0);
     var best=0,bx0=0,by0=0,bx1=0,by1=0;
     for(var s=0;s<N;s++){
@@ -416,7 +412,6 @@
     }
     box=(best>N*0.006)?{x:bx0/GW,y:by0/GH,w:(bx1-bx0+1)/GW,h:(by1-by0+1)/GH,a:best/N}:null;
 
-    // foreground density inside the zone
     var zx0=Math.max(0,Math.round(zone.x*GW)), zx1=Math.min(GW,Math.round((zone.x+zone.w)*GW)),
         zy0=Math.max(0,Math.round(zone.y*GH)), zy1=Math.min(GH,Math.round((zone.y+zone.h)*GH)),
         hit=0, tot=Math.max(1,(zx1-zx0)*(zy1-zy0));
@@ -426,18 +421,17 @@
     }
     zoneFill=hit/tot;
 
-    // adapt the background only where nothing is moving
     for(var b=0;b<N;b++) if(!clean[b]) bg[b]+=(cur[b]-bg[b])*0.02;
 
     applyState(zoneFill>0.06, performance.now());
   }
 
   function applyState(now, t){
-    if(now===occupied){ pending=null; return; }
+    if(now===present){ pending=null; return; }
     if(pending!==now){ pending=now; pendingSince=t; return; }
     if(t-pendingSince<DEBOUNCE) return;
     if(!now) stops++; else if(events.length) idleTotal+=t-stateSince;
-    occupied=now; stateSince=t; pending=null;
+    present=now; stateSince=t; pending=null;
     events.push({t:t,occ:now});
     if(events.length>600) events.shift();
   }
@@ -473,7 +467,7 @@
       octx.moveTo(x,y+h-cl); octx.lineTo(x,y+h); octx.lineTo(x+cl,y+h);
       octx.moveTo(x+w-cl,y+h); octx.lineTo(x+w,y+h); octx.lineTo(x+w,y+h-cl);
       octx.stroke();
-      var tag='PERSONNE '+Math.round(Math.min(99,box.a*900))+'%';
+      var tag='MOTION '+Math.round(Math.min(99,box.a*900))+'%';
       octx.font='600 10px "IBM Plex Mono",monospace';
       var tw=octx.measureText(tag).width;
       octx.fillStyle='#2ED3C6';
@@ -481,10 +475,10 @@
       octx.fillStyle='#04231F';
       octx.fillText(tag,x+5,Math.max(0,y-15)+11);
     }
-    drawZone(W,H,occupied?'#4ADE80':'#F5A524');
+    drawZone(W,H,present?'#4ADE80':'#F5A524');
     octx.font='500 10px "IBM Plex Mono",monospace';
     octx.fillStyle='rgba(215,224,232,.75)';
-    octx.fillText(Math.round(fps)+' IPS  ·  ZONE '+Math.round(zoneFill*100)+'%',8,H-9);
+    octx.fillText(Math.round(fps)+' FPS  ·  ZONE '+Math.round(zoneFill*100)+'%',8,H-9);
   }
 
   function drawZone(W,H,color){
@@ -497,7 +491,7 @@
     octx.fillRect(x+w-16,y+h-16,16,16);
     octx.globalAlpha=1; octx.fillRect(x+w-15,y+h-4,11,3); octx.fillRect(x+w-4,y+h-15,3,11);
     octx.font='600 9px "IBM Plex Mono",monospace';
-    octx.fillText('ZONE POSTE 07',x+1,y-5);
+    octx.fillText('DETECTION ZONE',x+1,y-5);
     octx.restore();
   }
 
@@ -531,17 +525,17 @@
 
   function readouts(){
     if(demo){
-      vState.textContent='VIDE'; vState.className='v idle';
+      vState.textContent='CLEAR'; vState.className='v off';
       vSince.textContent='00:41'; vSince.className='v';
       vIdle.textContent='02:07'; vIdle.className='v';
       vStops.textContent='4'; vStops.className='v';
       return;
     }
     var t=performance.now();
-    vState.textContent=occupied?'OCCUPÉ':'VIDE';
-    vState.className='v '+(occupied?'live':'idle');
+    vState.textContent=present?'PRESENT':'CLEAR';
+    vState.className='v '+(present?'on':'off');
     vSince.textContent=mmss(t-stateSince); vSince.className='v';
-    vIdle.textContent=mmss(idleTotal+(occupied?0:t-stateSince)); vIdle.className='v';
+    vIdle.textContent=mmss(idleTotal+(present?0:t-stateSince)); vIdle.className='v';
     vStops.textContent=String(stops); vStops.className='v';
   }
 
