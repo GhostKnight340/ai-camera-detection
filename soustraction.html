@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+  :root{color-scheme:dark;padding-top:env(safe-area-inset-top,0px)}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style><title>Vigie Poste</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --ink:#0B0F14;
+    --panel:#141B23;
+    --panel-2:#1B242E;
+    --line:#243140;
+    --text:#D7E0E8;
+    --dim:#7C8C9C;
+    --accent:#2ED3C6;
+    --live:#4ADE80;
+    --idle:#F5A524;
+    --stop:#F2555A;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--ink);color:var(--text);
+    font-family:var(--sans);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  #app{
+    height:100%;display:flex;flex-direction:column;
+    max-width:860px;margin:0 auto;
+    padding-inline:16px;padding-block:0;
+  }
+
+  /* ---- header ---- */
+  header{
+    display:flex;align-items:center;gap:10px;
+    padding-block:14px 12px;border-bottom:1px solid var(--line);
+    flex:0 0 auto;
+  }
+  .mark{
+    width:26px;height:26px;border:1.5px solid var(--accent);border-radius:3px;
+    position:relative;flex:0 0 auto;
+  }
+  .mark::after{
+    content:"";position:absolute;inset:6px;border-radius:1px;
+    background:var(--accent);opacity:.55;
+  }
+  h1{
+    font-size:15px;font-weight:600;margin:0;letter-spacing:.02em;
+    text-wrap:balance;
+  }
+  .sub{
+    font-family:var(--mono);font-size:10px;color:var(--dim);
+    letter-spacing:.14em;text-transform:uppercase;margin-top:1px;
+  }
+  .hgroup{flex:1 1 auto;min-width:0}
+  .beacon{
+    display:flex;align-items:center;gap:7px;font-family:var(--mono);
+    font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+    flex:0 0 auto;
+  }
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  .beacon.on .dot{background:var(--live);animation:pulse 2s ease-in-out infinite}
+  .beacon.on{color:var(--live)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.beacon.on .dot{animation:none}}
+
+  /* ---- viewfinder ---- */
+  .stage{
+    flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+    min-height:0;padding-block:12px;
+  }
+  .frame{
+    position:relative;width:100%;max-width:100%;
+    aspect-ratio:4/3;max-height:100%;
+    background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    overflow:hidden;touch-action:none;
+  }
+  .frame video{
+    position:absolute;inset:0;width:100%;height:100%;
+    object-fit:fill;display:block;background:var(--panel);
+  }
+  .frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+  .idlecard{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;text-align:center;
+    padding:24px;background:
+      repeating-linear-gradient(135deg,transparent 0 11px,rgba(46,211,198,.028) 11px 22px),
+      var(--panel);
+  }
+  .idlecard p{
+    margin:0;max-width:34ch;color:var(--dim);font-size:13px;
+  }
+  .idlecard .big{
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent);
+  }
+
+  /* ---- readouts ---- */
+  .readout{
+    flex:0 0 auto;display:grid;gap:1px;
+    grid-template-columns:repeat(4,1fr);
+    background:var(--line);border:1px solid var(--line);border-radius:4px;
+    overflow:hidden;
+  }
+  .tile{background:var(--panel);padding:9px 10px 10px;min-width:0}
+  .tile .k{
+    font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--dim);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;
+  }
+  .tile .v{
+    font-family:var(--mono);font-size:19px;font-weight:500;
+    font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:-.01em;
+  }
+  #tState .v{font-size:15px;font-weight:600;letter-spacing:.03em}
+  .v.live{color:var(--live)}.v.idle{color:var(--idle)}.v.none{color:var(--dim)}
+  @media (max-width:520px){
+    .readout{grid-template-columns:repeat(2,1fr)}
+    .tile .v{font-size:17px}
+  }
+
+  /* ---- timeline ---- */
+  .tl{flex:0 0 auto;margin-top:10px}
+  .tl-head{
+    display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--dim);margin-bottom:5px;
+  }
+  #tlTag{color:var(--accent)}
+  #tlStrip{
+    width:100%;height:26px;display:block;
+    border:1px solid var(--line);border-radius:3px;background:var(--panel);
+  }
+
+  /* ---- controls ---- */
+  .controls{
+    flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    padding-block:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  }
+  button{
+    font-family:var(--sans);font-size:13px;font-weight:500;
+    padding:9px 15px;border-radius:3px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--text);cursor:pointer;
+    transition:border-color .15s,background .15s;
+  }
+  button:hover:not(:disabled){border-color:var(--dim)}
+  button:disabled{opacity:.38;cursor:not-allowed}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button.primary{
+    background:var(--accent);border-color:var(--accent);color:#04231F;font-weight:600;
+  }
+  button.primary:hover:not(:disabled){background:#3EE4D6;border-color:#3EE4D6}
+
+  .slider{
+    display:flex;align-items:center;gap:9px;flex:1 1 190px;min-width:170px;
+    background:var(--panel);border:1px solid var(--line);border-radius:3px;
+    padding:7px 11px;
+  }
+  .slider label{
+    font-family:var(--mono);font-size:9px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--dim);white-space:nowrap;
+  }
+  .slider input{flex:1 1 auto;min-width:0;accent-color:var(--accent)}
+  .slider output{
+    font-family:var(--mono);font-size:11px;color:var(--text);
+    font-variant-numeric:tabular-nums;width:2.2em;text-align:right;
+  }
+
+  .note{
+    flex:0 0 auto;font-size:11.5px;color:var(--dim);
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  }
+  .note b{color:var(--text);font-weight:500}
+  .err{color:var(--stop)}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div class="mark"></div>
+    <div class="hgroup">
+      <h1>Vigie Poste</h1>
+      <div class="sub">Détection de présence · Poste 07</div>
+    </div>
+    <div class="beacon" id="beacon"><span class="dot"></span><span id="beaconTxt">Hors ligne</span></div>
+  </header>
+
+  <div class="stage">
+    <div class="frame" id="frame">
+      <video id="vid" playsinline muted autoplay></video>
+      <canvas id="ov"></canvas>
+      <div class="idlecard" id="idlecard">
+        <div class="big">Caméra inactive</div>
+        <p>Posez le téléphone face au poste de travail, puis démarrez. Le cadre bleu délimite la zone surveillée&nbsp;— déplacez-le, ou tirez son coin pour le redimensionner.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="readout">
+    <div class="tile" id="tState"><div class="k">État poste</div><div class="v none" id="vState">—</div></div>
+    <div class="tile"><div class="k">Depuis</div><div class="v none" id="vSince">--:--</div></div>
+    <div class="tile"><div class="k">Arrêt cumulé</div><div class="v none" id="vIdle">--:--</div></div>
+    <div class="tile"><div class="k">Arrêts</div><div class="v none" id="vStops">—</div></div>
+  </div>
+
+  <div class="tl">
+    <div class="tl-head">
+      <span>Chronologie · 3 dernières minutes</span>
+      <span id="tlTag">Exemple</span>
+    </div>
+    <canvas id="tlStrip"></canvas>
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="btnStart">Démarrer la caméra</button>
+    <button id="btnBg" disabled>Recalibrer le fond</button>
+    <button id="btnFlip" disabled>Pivoter</button>
+    <div class="slider">
+      <label for="sens">Sensibilité</label>
+      <input type="range" id="sens" min="1" max="10" step="1" value="5">
+      <output id="sensOut">5</output>
+    </div>
+  </div>
+
+  <div class="note" id="note">
+    Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil. La caméra exige une connexion HTTPS.
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var vid=document.getElementById('vid'),
+      ov=document.getElementById('ov'),
+      octx=ov.getContext('2d'),
+      frame=document.getElementById('frame'),
+      idlecard=document.getElementById('idlecard'),
+      strip=document.getElementById('tlStrip'),
+      sctx=strip.getContext('2d'),
+      btnStart=document.getElementById('btnStart'),
+      btnBg=document.getElementById('btnBg'),
+      btnFlip=document.getElementById('btnFlip'),
+      sens=document.getElementById('sens'),
+      sensOut=document.getElementById('sensOut'),
+      beacon=document.getElementById('beacon'),
+      beaconTxt=document.getElementById('beaconTxt'),
+      note=document.getElementById('note'),
+      vState=document.getElementById('vState'),
+      vSince=document.getElementById('vSince'),
+      vIdle=document.getElementById('vIdle'),
+      vStops=document.getElementById('vStops'),
+      tlTag=document.getElementById('tlTag');
+
+  // ---- detection grid -------------------------------------------------
+  var GW=96, GH=72, N=GW*GH;
+  var work=document.createElement('canvas'); work.width=GW; work.height=GH;
+  var wctx=work.getContext('2d',{willReadFrequently:true});
+  var bg=null, cur=new Float32Array(N), mask=new Uint8Array(N),
+      clean=new Uint8Array(N), lab=new Int32Array(N), stack=new Int32Array(N);
+
+  // ---- state ----------------------------------------------------------
+  var running=false, facing='environment', stream=null;
+  var DEBOUNCE=2000;                 // state must hold 2s before it flips
+  var occupied=false, pending=null, pendingSince=0, stateSince=0;
+  var idleTotal=0, stops=0, started=0;
+  var events=[];                      // {t, occ}
+  var box=null, zoneFill=0;
+  var lastProc=0, PROC_MS=80;         // ~12 Hz detection
+  var fps=0, lastFrame=0;
+  var demo=true;
+
+  // zone in normalised coords
+  var zone={x:.28,y:.24,w:.44,h:.56};
+
+  seedDemo();
+
+  // ---- camera ---------------------------------------------------------
+  btnStart.addEventListener('click',function(){ running?stop():start(); });
+  btnFlip.addEventListener('click',function(){
+    facing=(facing==='environment')?'user':'environment';
+    if(running){ stop(); start(); }
+  });
+  btnBg.addEventListener('click',function(){ bg=null; flash('Fond recalibré'); });
+  sens.addEventListener('input',function(){ sensOut.textContent=sens.value; });
+
+  function start(){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      return fail("Ce navigateur n'expose pas la caméra. Utilisez Chrome ou Safari en HTTPS.");
+    }
+    btnStart.disabled=true; btnStart.textContent='Connexion…';
+    navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},
+      audio:false
+    }).then(onStream).catch(function(){
+      navigator.mediaDevices.getUserMedia({video:true,audio:false})
+        .then(onStream).catch(function(e){
+          btnStart.disabled=false; btnStart.textContent='Démarrer la caméra';
+          fail(e&&e.name==='NotAllowedError'
+            ? "Accès refusé. Autorisez la caméra dans les réglages du navigateur, puis réessayez."
+            : "Aucune caméra accessible ("+(e&&e.name||'erreur')+").");
+        });
+    });
+  }
+
+  function onStream(s){
+    stream=s; vid.srcObject=s;
+    vid.play().catch(function(){});
+    vid.onloadedmetadata=function(){
+      var w=vid.videoWidth||4, h=vid.videoHeight||3;
+      frame.style.aspectRatio=w+'/'+h;
+      GH=Math.max(40,Math.round(GW*h/w));
+      N=GW*GH; work.height=GH;
+      cur=new Float32Array(N); mask=new Uint8Array(N); clean=new Uint8Array(N);
+      lab=new Int32Array(N); stack=new Int32Array(N); bg=null;
+      sizeOverlay();
+    };
+    running=true; demo=false;
+    events=[]; idleTotal=0; stops=0; occupied=false; pending=null;
+    started=performance.now(); stateSince=started;
+    events.push({t:started,occ:false});
+    tlTag.textContent='En direct';
+    btnStart.disabled=false; btnStart.textContent='Arrêter';
+    btnBg.disabled=false; btnFlip.disabled=false;
+    idlecard.hidden=true;
+    beacon.classList.add('on'); beaconTxt.textContent='En direct';
+    note.innerHTML="Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil.";
+    flash('Calibrage du fond — laissez la zone vide 2 s');
+  }
+
+  function stop(){
+    running=false;
+    if(stream){ stream.getTracks().forEach(function(t){t.stop();}); stream=null; }
+    vid.srcObject=null; bg=null; box=null;
+    btnStart.textContent='Démarrer la caméra';
+    btnBg.disabled=true; btnFlip.disabled=true;
+    idlecard.hidden=false;
+    beacon.classList.remove('on'); beaconTxt.textContent='Hors ligne';
+    octx.clearRect(0,0,ov.width,ov.height);
+  }
+
+  function fail(msg){ note.innerHTML='<span class="err">'+msg+'</span>'; }
+  function flash(msg){
+    note.innerHTML='<b>'+msg+'</b>';
+    setTimeout(function(){
+      if(running) note.innerHTML="Détection par <b>soustraction de fond</b> : aucun modèle n'est téléchargé, tout reste sur l'appareil.";
+    },2600);
+  }
+
+  // ---- detection ------------------------------------------------------
+  function detect(){
+    wctx.drawImage(vid,0,0,GW,GH);
+    var d;
+    try{ d=wctx.getImageData(0,0,GW,GH).data; }catch(e){ return; }
+
+    for(var i=0,p=0;i<N;i++,p+=4){
+      cur[i]=(d[p]*0.299+d[p+1]*0.587+d[p+2]*0.114);
+    }
+    if(!bg){ bg=Float32Array.from(cur); return; }
+
+    var thr=34-parseInt(sens.value,10)*2.6;      // sens 1..10  ->  31.4 .. 8
+    for(var j=0;j<N;j++){
+      var dv=cur[j]-bg[j]; if(dv<0) dv=-dv;
+      mask[j]=dv>thr?1:0;
+    }
+
+    // erode: keep a cell only if >=3 of its 8 neighbours also fired
+    for(var y=0;y<GH;y++){
+      for(var x=0;x<GW;x++){
+        var k=y*GW+x;
+        if(!mask[k]){ clean[k]=0; continue; }
+        var n=0;
+        for(var dy=-1;dy<=1;dy++){
+          var yy=y+dy; if(yy<0||yy>=GH) continue;
+          for(var dx=-1;dx<=1;dx++){
+            var xx=x+dx; if(xx<0||xx>=GW||(dx===0&&dy===0)) continue;
+            if(mask[yy*GW+xx]) n++;
+          }
+        }
+        clean[k]=n>=3?1:0;
+      }
+    }
+
+    // largest connected component -> bounding box
+    lab.fill(0);
+    var best=0,bx0=0,by0=0,bx1=0,by1=0;
+    for(var s=0;s<N;s++){
+      if(!clean[s]||lab[s]) continue;
+      var top=0,area=0,x0=GW,y0=GH,x1=-1,y1=-1;
+      stack[top++]=s; lab[s]=1;
+      while(top>0){
+        var c=stack[--top], cx=c%GW, cy=(c-cx)/GW;
+        area++;
+        if(cx<x0)x0=cx; if(cx>x1)x1=cx; if(cy<y0)y0=cy; if(cy>y1)y1=cy;
+        for(var ey=-1;ey<=1;ey++){
+          var ny=cy+ey; if(ny<0||ny>=GH) continue;
+          for(var ex=-1;ex<=1;ex++){
+            var nx=cx+ex; if(nx<0||nx>=GW) continue;
+            var ni=ny*GW+nx;
+            if(clean[ni]&&!lab[ni]){ lab[ni]=1; stack[top++]=ni; }
+          }
+        }
+      }
+      if(area>best){ best=area; bx0=x0; by0=y0; bx1=x1; by1=y1; }
+    }
+    box=(best>N*0.006)?{x:bx0/GW,y:by0/GH,w:(bx1-bx0+1)/GW,h:(by1-by0+1)/GH,a:best/N}:null;
+
+    // foreground density inside the zone
+    var zx0=Math.max(0,Math.round(zone.x*GW)), zx1=Math.min(GW,Math.round((zone.x+zone.w)*GW)),
+        zy0=Math.max(0,Math.round(zone.y*GH)), zy1=Math.min(GH,Math.round((zone.y+zone.h)*GH)),
+        hit=0, tot=Math.max(1,(zx1-zx0)*(zy1-zy0));
+    for(var zy=zy0;zy<zy1;zy++){
+      var row=zy*GW;
+      for(var zx=zx0;zx<zx1;zx++) if(clean[row+zx]) hit++;
+    }
+    zoneFill=hit/tot;
+
+    // adapt the background only where nothing is moving
+    for(var b=0;b<N;b++) if(!clean[b]) bg[b]+=(cur[b]-bg[b])*0.02;
+
+    applyState(zoneFill>0.06, performance.now());
+  }
+
+  function applyState(now, t){
+    if(now===occupied){ pending=null; return; }
+    if(pending!==now){ pending=now; pendingSince=t; return; }
+    if(t-pendingSince<DEBOUNCE) return;
+    if(!now) stops++; else if(events.length) idleTotal+=t-stateSince;
+    occupied=now; stateSince=t; pending=null;
+    events.push({t:t,occ:now});
+    if(events.length>600) events.shift();
+  }
+
+  // ---- render ---------------------------------------------------------
+  function sizeOverlay(){
+    var r=frame.getBoundingClientRect(),
+        dpr=Math.min(window.devicePixelRatio||1,2);
+    ov.width=Math.max(1,Math.round(r.width*dpr));
+    ov.height=Math.max(1,Math.round(r.height*dpr));
+    octx.setTransform(dpr,0,0,dpr,0,0);
+    var sr=strip.getBoundingClientRect();
+    strip.width=Math.max(1,Math.round(sr.width*dpr));
+    strip.height=Math.max(1,Math.round(sr.height*dpr));
+    sctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize',sizeOverlay);
+  sizeOverlay();
+
+  function draw(){
+    var r=frame.getBoundingClientRect(), W=r.width, H=r.height;
+    octx.clearRect(0,0,W,H);
+    if(!running){ drawZone(W,H,'rgba(124,140,156,.85)'); return; }
+
+    if(box){
+      var x=box.x*W,y=box.y*H,w=box.w*W,h=box.h*H;
+      octx.strokeStyle='#2ED3C6'; octx.lineWidth=2;
+      octx.strokeRect(x,y,w,h);
+      var cl=Math.min(16,w/3,h/3);
+      octx.lineWidth=3.5; octx.beginPath();
+      octx.moveTo(x,y+cl); octx.lineTo(x,y); octx.lineTo(x+cl,y);
+      octx.moveTo(x+w-cl,y); octx.lineTo(x+w,y); octx.lineTo(x+w,y+cl);
+      octx.moveTo(x,y+h-cl); octx.lineTo(x,y+h); octx.lineTo(x+cl,y+h);
+      octx.moveTo(x+w-cl,y+h); octx.lineTo(x+w,y+h); octx.lineTo(x+w,y+h-cl);
+      octx.stroke();
+      var tag='PERSONNE '+Math.round(Math.min(99,box.a*900))+'%';
+      octx.font='600 10px "IBM Plex Mono",monospace';
+      var tw=octx.measureText(tag).width;
+      octx.fillStyle='#2ED3C6';
+      octx.fillRect(x,Math.max(0,y-15),tw+10,15);
+      octx.fillStyle='#04231F';
+      octx.fillText(tag,x+5,Math.max(0,y-15)+11);
+    }
+    drawZone(W,H,occupied?'#4ADE80':'#F5A524');
+    octx.font='500 10px "IBM Plex Mono",monospace';
+    octx.fillStyle='rgba(215,224,232,.75)';
+    octx.fillText(Math.round(fps)+' IPS  ·  ZONE '+Math.round(zoneFill*100)+'%',8,H-9);
+  }
+
+  function drawZone(W,H,color){
+    var x=zone.x*W,y=zone.y*H,w=zone.w*W,h=zone.h*H;
+    octx.save();
+    octx.setLineDash([7,5]); octx.lineWidth=1.5; octx.strokeStyle=color;
+    octx.strokeRect(x,y,w,h);
+    octx.setLineDash([]);
+    octx.fillStyle=color; octx.globalAlpha=.16;
+    octx.fillRect(x+w-16,y+h-16,16,16);
+    octx.globalAlpha=1; octx.fillRect(x+w-15,y+h-4,11,3); octx.fillRect(x+w-4,y+h-15,3,11);
+    octx.font='600 9px "IBM Plex Mono",monospace';
+    octx.fillText('ZONE POSTE 07',x+1,y-5);
+    octx.restore();
+  }
+
+  function drawStrip(){
+    var r=strip.getBoundingClientRect(), W=r.width, H=r.height,
+        now=demo?started+180000:performance.now(), span=180000, t0=now-span;
+    sctx.clearRect(0,0,W,H);
+    sctx.fillStyle='#141B23'; sctx.fillRect(0,0,W,H);
+    for(var i=0;i<events.length;i++){
+      var a=Math.max(events[i].t,t0),
+          b=(i+1<events.length?events[i+1].t:now);
+      if(b<=t0) continue;
+      var x=(a-t0)/span*W, w=Math.max(1,(b-a)/span*W);
+      sctx.fillStyle=events[i].occ?'#4ADE80':'#F5A524';
+      sctx.globalAlpha=events[i].occ?.85:.7;
+      sctx.fillRect(x,0,w,H);
+    }
+    sctx.globalAlpha=1;
+    sctx.strokeStyle='rgba(36,49,64,.9)'; sctx.lineWidth=1;
+    for(var m=1;m<3;m++){
+      var gx=Math.round(W*m/3)+.5;
+      sctx.beginPath(); sctx.moveTo(gx,0); sctx.lineTo(gx,H); sctx.stroke();
+    }
+  }
+
+  function mmss(ms){
+    if(!isFinite(ms)||ms<0) ms=0;
+    var s=Math.floor(ms/1000);
+    return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+  }
+
+  function readouts(){
+    if(demo){
+      vState.textContent='VIDE'; vState.className='v idle';
+      vSince.textContent='00:41'; vSince.className='v';
+      vIdle.textContent='02:07'; vIdle.className='v';
+      vStops.textContent='4'; vStops.className='v';
+      return;
+    }
+    var t=performance.now();
+    vState.textContent=occupied?'OCCUPÉ':'VIDE';
+    vState.className='v '+(occupied?'live':'idle');
+    vSince.textContent=mmss(t-stateSince); vSince.className='v';
+    vIdle.textContent=mmss(idleTotal+(occupied?0:t-stateSince)); vIdle.className='v';
+    vStops.textContent=String(stops); vStops.className='v';
+  }
+
+  function seedDemo(){
+    started=performance.now();
+    var t=started, pat=[[true,34000],[false,9000],[true,52000],[false,18000],
+                        [true,26000],[false,12000],[true,88000],[false,41000]];
+    for(var i=0;i<pat.length;i++){ events.push({t:t,occ:pat[i][0]}); t+=pat[i][1]; }
+    idleTotal=127000; stops=4;
+  }
+
+  function loop(ts){
+    if(lastFrame){ var dt=ts-lastFrame; if(dt>0) fps=fps*0.9+(1000/dt)*0.1; }
+    lastFrame=ts;
+    if(running&&vid.readyState>=2&&ts-lastProc>PROC_MS){ lastProc=ts; detect(); }
+    draw(); drawStrip(); readouts();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---- zone drag / resize --------------------------------------------
+  var drag=null;
+  frame.addEventListener('pointerdown',function(e){
+    var r=frame.getBoundingClientRect(),
+        px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height,
+        hx=zone.x+zone.w, hy=zone.y+zone.h,
+        hs=Math.max(0.055,22/r.width);
+    if(px>hx-hs&&px<hx+hs&&py>hy-hs&&py<hy+hs){
+      drag={mode:'size'};
+    }else if(px>zone.x&&px<hx&&py>zone.y&&py<hy){
+      drag={mode:'move',ox:px-zone.x,oy:py-zone.y};
+    }else return;
+    frame.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  frame.addEventListener('pointermove',function(e){
+    if(!drag) return;
+    var r=frame.getBoundingClientRect(),
+        px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
+    if(drag.mode==='move'){
+      zone.x=Math.min(Math.max(0,px-drag.ox),1-zone.w);
+      zone.y=Math.min(Math.max(0,py-drag.oy),1-zone.h);
+    }else{
+      zone.w=Math.min(Math.max(0.1,px-zone.x),1-zone.x);
+      zone.h=Math.min(Math.max(0.1,py-zone.y),1-zone.y);
+    }
+    e.preventDefault();
+  });
+  function endDrag(e){ if(drag){ drag=null; try{frame.releasePointerCapture(e.pointerId);}catch(_){} } }
+  frame.addEventListener('pointerup',endDrag);
+  frame.addEventListener('pointercancel',endDrag);
+})();
+</script>
+
+</body>
+</html>
