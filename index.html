@@ -3,25 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Person Detector</title>
+<title>Action Detector</title>
 <style>
   :root{
     --ink:#0B0F14;--panel:#141B23;--panel-2:#1B242E;--line:#243140;
     --text:#D7E0E8;--dim:#7C8C9C;--accent:#2ED3C6;
-    --on:#4ADE80;--off:#F5A524;--bad:#F2555A;
+    --on:#4ADE80;--bad:#F2555A;
     --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
     --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
     color-scheme:dark;
     padding-top:env(safe-area-inset-top,0px);
   }
   *{box-sizing:border-box}
-  /* Author rules beat the UA default for [hidden], so restate it explicitly —
-     without this, .hint{display:flex} keeps the overlay on top of the video. */
+  /* Author rules outrank the UA default for [hidden]; without this,
+     .hint{display:flex} keeps the overlay pinned over the video. */
   [hidden]{display:none!important}
   img{max-width:100%}
   html,body{height:100%}
   body{margin:0;background:var(--ink);color:var(--text);font:14px/1.45 var(--sans)}
-  #app{height:100%;display:flex;flex-direction:column;max-width:860px;margin:0 auto;padding-inline:16px}
+  #app{height:100%;display:flex;flex-direction:column;max-width:900px;margin:0 auto;padding-inline:16px}
 
   header{display:flex;align-items:center;gap:10px;padding-block:14px 12px;
     border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -42,14 +42,24 @@
 
   .stage{flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-height:0;padding-block:12px}
   .frame{position:relative;width:100%;aspect-ratio:4/3;max-height:100%;background:var(--panel);
-    border:1px solid var(--line);border-radius:4px;overflow:hidden;touch-action:none}
+    border:1px solid var(--line);border-radius:4px;overflow:hidden}
   .frame video,.frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-  .frame video{object-fit:fill;background:var(--panel)}
+  /* Desaturate the feed so the coloured limb overlay reads against it. */
+  .frame video{object-fit:fill;background:var(--panel);filter:grayscale(1) contrast(1.06) brightness(1.04)}
+  .frame.plain video{filter:none}
   .hint{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
     align-items:center;justify-content:center;text-align:center;padding:24px;
     color:var(--dim);font-size:13px;background:var(--panel)}
   .hint .big{font:11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
-  .hint p{margin:0;max-width:34ch}
+  .hint p{margin:0;max-width:36ch}
+
+  .chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;min-height:26px;margin-bottom:10px}
+  .chip{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    padding:6px 9px;border-radius:2px;background:var(--panel-2);
+    border:1px solid var(--line);color:var(--dim)}
+  .chip.hot{background:rgba(46,211,198,.14);border-color:var(--accent);color:var(--accent)}
+  .chips .empty{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);padding:6px 0;opacity:.6}
 
   .readout{flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
     background:var(--line);border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -57,9 +67,10 @@
   .k{font:9px/1.4 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--dim);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .v{font:500 19px/1.2 var(--mono);font-variant-numeric:tabular-nums;margin-top:3px}
-  #vState{font-size:15px;font-weight:600;letter-spacing:.03em}
-  .on{color:var(--on)}.off{color:var(--off)}.none{color:var(--dim)}
-  @media (max-width:520px){.readout{grid-template-columns:repeat(2,1fr)}.v{font-size:17px}}
+  #vAction{font-size:14px;font-weight:600;letter-spacing:.02em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .none{color:var(--dim)}
+  @media (max-width:560px){.readout{grid-template-columns:repeat(2,1fr)}.v{font-size:17px}}
 
   .controls{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-block:12px}
   button{font:500 13px var(--sans);padding:9px 15px;border-radius:3px;
@@ -69,12 +80,8 @@
   button:disabled{opacity:.38;cursor:not-allowed}
   button.primary{background:var(--accent);border-color:var(--accent);color:#04231F;font-weight:600}
   button.primary:hover:not(:disabled){background:#3EE4D6;border-color:#3EE4D6}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .slider{display:flex;align-items:center;gap:9px;flex:1 1 190px;min-width:170px;background:var(--panel);
-    border:1px solid var(--line);border-radius:3px;padding:7px 11px}
-  .slider label{font:9px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
-  .slider input{flex:1 1 auto;min-width:0;accent-color:var(--accent)}
-  .slider output{font:11px var(--mono);width:2.6em;text-align:right;font-variant-numeric:tabular-nums}
 
   .note{flex:0 0 auto;font-size:11.5px;color:var(--dim);
     padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
@@ -88,43 +95,43 @@
   <header>
     <div class="mark"></div>
     <div class="hgroup">
-      <h1>Person Detector</h1>
-      <div class="sub">EfficientDet-Lite0 &middot; class &ldquo;person&rdquo;</div>
+      <h1>Action Detector</h1>
+      <div class="sub">Pose landmarks &middot; 33 keypoints per person</div>
     </div>
     <div class="beacon" id="beacon"><span class="dot"></span><span id="beaconTxt">Offline</span></div>
   </header>
 
   <div class="stage">
-    <div class="frame" id="frame">
+    <div class="frame plain" id="frame">
       <video id="vid" playsinline muted autoplay></video>
       <canvas id="ov"></canvas>
       <div class="hint" id="hint">
         <div class="big" id="hintBig">Loading model</div>
-        <p id="hintTxt">Downloading the detection model (~7&nbsp;MB). This happens once, then it is cached.</p>
+        <p id="hintTxt">Downloading the pose model (~6&nbsp;MB). This happens once, then it is cached.</p>
       </div>
     </div>
   </div>
 
+  <div class="chips" id="chips"><span class="empty">No signals</span></div>
+
   <div class="readout">
-    <div class="tile"><div class="k">Status</div><div class="v none" id="vState">&mdash;</div></div>
-    <div class="tile"><div class="k">For</div><div class="v none" id="vSince">--:--</div></div>
     <div class="tile"><div class="k">People</div><div class="v none" id="vCount">&mdash;</div></div>
+    <div class="tile"><div class="k">Top action</div><div class="v none" id="vAction">&mdash;</div></div>
+    <div class="tile"><div class="k">Held for</div><div class="v none" id="vSince">--:--</div></div>
     <div class="tile"><div class="k">Inference</div><div class="v none" id="vMs">-- ms</div></div>
   </div>
 
   <div class="controls">
     <button class="primary" id="btnStart" disabled>Start camera</button>
     <button id="btnFlip" disabled>Flip</button>
-    <div class="slider">
-      <label for="conf">Threshold</label>
-      <input type="range" id="conf" min="10" max="80" step="5" value="40">
-      <output id="confOut">0.40</output>
-    </div>
+    <button id="btnGray" aria-pressed="false">Grayscale</button>
+    <button id="btnSkel" aria-pressed="true">Skeleton</button>
   </div>
 
   <div class="note" id="note">
-    Runs entirely <b>in the browser</b> &mdash; no video leaves the device.
-    <br><a href="motion.html">&rarr; Motion-based version (no model download)</a>
+    Actions are derived from <b>joint geometry</b> &mdash; torso angle, knee flexion, limb extension
+    and motion. Everything runs in the browser; no video leaves the device.
+    <br><a href="motion.html">&rarr; Motion-only version (no model download)</a>
   </div>
 </div>
 
@@ -142,7 +149,7 @@
   }, 25000);
 </script>
 <script type="module">
-import { FilesetResolver, ObjectDetector }
+import { FilesetResolver, PoseLandmarker }
   from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1";
 clearTimeout(window.__wd);
 
@@ -150,48 +157,71 @@ const $ = id => document.getElementById(id);
 const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
       hint=$('hint'), hintBig=$('hintBig'), hintTxt=$('hintTxt'),
       btnStart=$('btnStart'), btnFlip=$('btnFlip'),
-      conf=$('conf'), confOut=$('confOut'),
-      beacon=$('beacon'), beaconTxt=$('beaconTxt'), note=$('note');
+      btnGray=$('btnGray'), btnSkel=$('btnSkel'),
+      beacon=$('beacon'), beaconTxt=$('beaconTxt'),
+      note=$('note'), chips=$('chips');
 
-let detector=null, running=false, facing='environment', stream=null, lastVideoTime=-1;
-let boxes=[], inferMs=0;
+const BASE_NOTE = 'Actions are derived from <b>joint geometry</b> — torso angle, knee flexion, ' +
+  'limb extension and motion. Everything runs in the browser; no video leaves the device.' +
+  '<br><a href="motion.html">→ Motion-only version (no model download)</a>';
 
-const zone={x:.28,y:.24,w:.44,h:.56};   // normalised detection zone
-const DEBOUNCE=2000;                    // state must hold 2s before it flips
-let present=false, pending=null, pendingSince=0, stateSince=performance.now();
+let landmarker=null, running=false, facing='environment', stream=null, lastVideoTime=-1;
+let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true;
+let tracks=[], nextId=1;
 
-// ---- model ------------------------------------------------------------
+// ---- landmark indices --------------------------------------------------
+const NOSE=0, EAR_L=7, EAR_R=8,
+      SH_L=11, SH_R=12, EL_L=13, EL_R=14, WR_L=15, WR_R=16,
+      HIP_L=23, HIP_R=24, KN_L=25, KN_R=26, AN_L=27, AN_R=28;
+
+// bone -> colour, mimicking a part-segmentation overlay
+const BONES=[
+  [SH_L,SH_R,'#2E6BFF'],[SH_L,HIP_L,'#2E6BFF'],[SH_R,HIP_R,'#2E6BFF'],[HIP_L,HIP_R,'#2E6BFF'],
+  [SH_L,EL_L,'#FF3B30'],[EL_L,WR_L,'#FF9500'],
+  [SH_R,EL_R,'#34C759'],[EL_R,WR_R,'#A3E635'],
+  [HIP_L,KN_L,'#00D1FF'],[KN_L,AN_L,'#22D3A6'],
+  [HIP_R,KN_R,'#38BDF8'],[KN_R,AN_R,'#4ADE80']
+];
+
+// ---- model -------------------------------------------------------------
 try{
   const fileset = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
-  detector = await ObjectDetector.createFromOptions(fileset,{
+  landmarker = await PoseLandmarker.createFromOptions(fileset,{
     baseOptions:{
-      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
       delegate:"GPU"
     },
-    scoreThreshold:0.4,
-    categoryAllowlist:["person"],   // remove this line to see all 80 COCO classes
-    runningMode:"VIDEO"
+    runningMode:"VIDEO",
+    numPoses:2,
+    minPoseDetectionConfidence:0.5,
+    minPosePresenceConfidence:0.5,
+    minTrackingConfidence:0.5,
+    outputSegmentationMasks:false
   });
   hintBig.textContent="Ready";
-  hintTxt.textContent="Start the camera and point it at people. Drag the box to move the detection zone, or pull its corner to resize.";
+  hintTxt.textContent="Start the camera and step back so your whole body is in frame — the actions below need hips, knees and shoulders visible.";
   btnStart.disabled=false;
 }catch(e){
   hintBig.className="big err"; hintBig.textContent="Model failed";
-  hintTxt.textContent="Could not create the detector. Check the connection and reload.";
+  hintTxt.textContent="Could not create the pose landmarker. Check the connection and reload.";
   console.error(e);
 }
 
-conf.addEventListener('input',async()=>{
-  const v=(conf.value/100).toFixed(2); confOut.textContent=v;
-  if(detector) await detector.setOptions({scoreThreshold:parseFloat(v)});
-});
-
-// ---- camera -----------------------------------------------------------
+// ---- controls ----------------------------------------------------------
 btnStart.addEventListener('click',()=> running?stop():start());
 btnFlip.addEventListener('click',()=>{
   facing = facing==='environment'?'user':'environment';
   if(running){ stop(); start(); }
+});
+btnGray.addEventListener('click',()=>{
+  const on = btnGray.getAttribute('aria-pressed')!=='true';
+  btnGray.setAttribute('aria-pressed',String(on));
+  frame.classList.toggle('plain',!on);
+});
+btnSkel.addEventListener('click',()=>{
+  showSkel = btnSkel.getAttribute('aria-pressed')!=='true';
+  btnSkel.setAttribute('aria-pressed',String(showSkel));
 });
 
 async function start(){
@@ -209,8 +239,7 @@ async function start(){
       return;
     }
   }
-
-  // Attach the handler BEFORE srcObject, or metadata can fire first and be missed.
+  // Attach BEFORE srcObject: metadata can otherwise fire before the handler exists.
   vid.onloadedmetadata=()=>{
     if(vid.videoWidth) frame.style.aspectRatio = vid.videoWidth+'/'+vid.videoHeight;
     size();
@@ -220,17 +249,16 @@ async function start(){
   if(vid.videoWidth) frame.style.aspectRatio = vid.videoWidth+'/'+vid.videoHeight;
   size();
 
-  running=true; present=false; pending=null; stateSince=performance.now();
+  running=true; tracks=[]; people=[];
   hint.hidden=true;
   btnStart.disabled=false; btnStart.textContent='Stop'; btnFlip.disabled=false;
   beacon.classList.add('on'); beaconTxt.textContent='Live';
-  note.innerHTML='Runs entirely <b>in the browser</b> — no video leaves the device.'+
-    '<br><a href="motion.html">→ Motion-based version (no model download)</a>';
+  note.innerHTML=BASE_NOTE;
   requestAnimationFrame(loop);
 }
 
 function stop(){
-  running=false; boxes=[];
+  running=false; people=[]; tracks=[];
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
   vid.srcObject=null;
   hint.hidden=false; hintBig.className='big'; hintBig.textContent='Camera stopped';
@@ -238,42 +266,153 @@ function stop(){
   btnStart.textContent='Start camera'; btnFlip.disabled=true;
   beacon.classList.remove('on'); beaconTxt.textContent='Offline';
   ctx.clearRect(0,0,ov.width,ov.height);
+  renderChips([]);
 }
 
-// ---- loop -------------------------------------------------------------
-function loop(){
+// ---- geometry helpers --------------------------------------------------
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const ramp=(v,lo,hi)=>clamp((v-lo)/(hi-lo),0,1);
+
+// x is normalised to width and y to height, so x must be scaled by the
+// aspect ratio before any angle is computed or it comes out skewed.
+const P=(l,ar)=>({x:l.x*ar, y:l.y, v:l.visibility===undefined?1:l.visibility});
+const mid=(a,b)=>({x:(a.x+b.x)/2, y:(a.y+b.y)/2, v:Math.min(a.v,b.v)});
+
+function angleAt(a,b,c){
+  const abx=a.x-b.x, aby=a.y-b.y, cbx=c.x-b.x, cby=c.y-b.y;
+  const m=Math.hypot(abx,aby)*Math.hypot(cbx,cby);
+  if(!m) return 180;
+  return Math.acos(clamp((abx*cbx+aby*cby)/m,-1,1))*180/Math.PI;
+}
+
+// ---- action scoring ----------------------------------------------------
+// Every score is continuous and derived from measured joint geometry.
+function classify(lm, ar, speed){
+  const p=i=>P(lm[i],ar);
+  const shL=p(SH_L), shR=p(SH_R), hipL=p(HIP_L), hipR=p(HIP_R),
+        knL=p(KN_L),  knR=p(KN_R),  anL=p(AN_L),  anR=p(AN_R),
+        elL=p(EL_L),  elR=p(EL_R),  wrL=p(WR_L),  wrR=p(WR_R), nose=p(NOSE);
+  const sh=mid(shL,shR), hip=mid(hipL,hipR), kn=mid(knL,knR);
+  const torsoLen=Math.max(1e-4,Math.hypot(sh.x-hip.x, sh.y-hip.y));
+
+  // torso tilt away from vertical, 0 = upright
+  const torsoTilt=Math.abs(Math.atan2(sh.x-hip.x, hip.y-sh.y))*180/Math.PI;
+
+  // knee flexion, 180 = straight leg
+  const kneeVals=[];
+  if(Math.min(hipL.v,knL.v,anL.v)>0.5) kneeVals.push(angleAt(hipL,knL,anL));
+  if(Math.min(hipR.v,knR.v,anR.v)>0.5) kneeVals.push(angleAt(hipR,knR,anR));
+  const knee=kneeVals.length?kneeVals.reduce((a,b)=>a+b,0)/kneeVals.length:180;
+
+  // wrist height above its shoulder, in torso lengths
+  const raiseL=(shL.y-wrL.y)/torsoLen, raiseR=(shR.y-wrR.y)/torsoLen;
+  const raise=Math.max(raiseL,raiseR);
+
+  // arm extension: straight elbow + wrist far from the body midline
+  const extL=ramp(angleAt(shL,elL,wrL),130,170)*ramp(Math.abs(wrL.x-sh.x)/torsoLen,0.5,1.1);
+  const extR=ramp(angleAt(shR,elR,wrR),130,170)*ramp(Math.abs(wrR.x-sh.x)/torsoLen,0.5,1.1);
+  const reach=Math.max(extL,extR);
+
+  const handHead=Math.max(
+    1-ramp(Math.hypot(wrL.x-nose.x,wrL.y-nose.y)/torsoLen,0.25,0.7),
+    1-ramp(Math.hypot(wrR.x-nose.x,wrR.y-nose.y)/torsoLen,0.25,0.7));
+
+  const bend=ramp(torsoTilt,28,68);
+  const crouch=1-ramp(knee,108,158);
+  const upright=1-bend;
+  const horizontal=ramp(torsoTilt,62,85);
+  // sitting: knees folded but torso still upright, hips near knee height
+  const hipsAtKnee=1-ramp(Math.abs(hip.y-kn.y)/torsoLen,0.25,0.75);
+  const sit=crouch*upright*hipsAtKnee;
+  const squat=crouch*upright*(1-hipsAtKnee);
+  const walk=ramp(speed,0.05,0.30)*upright*(1-crouch);
+  const stand=upright*(1-crouch)*(1-ramp(speed,0.04,0.16));
+
+  const scores=[
+    ['Lying down',   horizontal*(1-crouch)],
+    ['Bending over', bend*(1-horizontal)*(1-crouch)],
+    ['Sitting',      sit],
+    ['Crouching',    squat],
+    ['Walking',      walk],
+    ['Standing',     stand],
+    ['Arms raised',  ramp(raise,0.05,0.55)],
+    ['Reaching out', reach*(1-bend)],
+    ['Hand to head', handHead]
+  ].filter(s=>s[1]>0.25).sort((a,b)=>b[1]-a[1]);
+
+  return {
+    scores,
+    flags:{
+      'Arms raised': ramp(raise,0.05,0.55)>0.5,
+      'Reaching':    reach>0.5,
+      'Hand to head':handHead>0.55,
+      'Moving':      speed>0.08,
+      'Crouched':    crouch>0.5,
+      'Bent over':   bend>0.5
+    }
+  };
+}
+
+// ---- per-person tracking ----------------------------------------------
+function track(lmSets, ar, t){
+  const out=[];
+  const used=new Set();
+  for(const lm of lmSets){
+    const hip=mid(P(lm[HIP_L],ar),P(lm[HIP_R],ar));
+    // nearest previous track wins, so ids and velocity stay stable
+    let best=null, bestD=0.22;
+    for(const tr of tracks){
+      if(used.has(tr.id)) continue;
+      const d=Math.hypot(tr.hip.x-hip.x, tr.hip.y-hip.y);
+      if(d<bestD){ bestD=d; best=tr; }
+    }
+    let speed=0;
+    if(best){
+      const dt=Math.max(1e-3,(t-best.t)/1000);
+      const raw=Math.hypot(hip.x-best.hip.x, hip.y-best.hip.y)/dt;
+      speed=best.speed*0.7+raw*0.3;          // EMA, raw frame speed is noisy
+      best.hip=hip; best.t=t; best.speed=speed;
+      used.add(best.id);
+    }else{
+      best={id:nextId++, hip, t, speed:0, label:null, cand:null, candAt:t, since:t};
+      tracks.push(best); used.add(best.id);
+    }
+    const res=classify(lm, ar, speed);
+    const top=res.scores[0]||['Unclear',0];
+
+    // hold a new label for 400ms before committing, or it flickers
+    if(best.label!==top[0]){
+      if(best.cand!==top[0]){ best.cand=top[0]; best.candAt=t; }
+      else if(t-best.candAt>400){ best.label=top[0]; best.since=t; best.cand=null; }
+    }else best.cand=null;
+
+    out.push({lm, id:best.id, label:best.label||top[0], since:best.since,
+              scores:res.scores, flags:res.flags});
+  }
+  tracks=tracks.filter(tr=>used.has(tr.id)||t-tr.t<1500);
+  return out;
+}
+
+// ---- loop --------------------------------------------------------------
+function loop(ts){
   if(!running) return;
-  if(detector && vid.readyState>=2 && vid.currentTime!==lastVideoTime){
+  if(lastFrame){ const dt=ts-lastFrame; if(dt>0) fps=fps*0.9+(1000/dt)*0.1; }
+  lastFrame=ts;
+
+  if(landmarker && vid.readyState>=2 && vid.currentTime!==lastVideoTime){
     lastVideoTime=vid.currentTime;
     const t0=performance.now();
     let res=null;
-    try{ res=detector.detectForVideo(vid,t0); }catch(_){}
+    try{ res=landmarker.detectForVideo(vid,t0); }catch(_){}
     inferMs=inferMs*0.8+(performance.now()-t0)*0.2;
-    const W=vid.videoWidth||1, H=vid.videoHeight||1;
-    boxes=((res&&res.detections)||[]).map(d=>({
-      x:d.boundingBox.originX/W, y:d.boundingBox.originY/H,
-      w:d.boundingBox.width/W,  h:d.boundingBox.height/H,
-      s:(d.categories[0]&&d.categories[0].score)||0
-    }));
-    // counts as inside when the foot-point of the box falls in the zone
-    const inZone = boxes.some(b=>{
-      const fx=b.x+b.w/2, fy=b.y+b.h;
-      return fx>zone.x && fx<zone.x+zone.w && fy>zone.y && fy<zone.y+zone.h;
-    });
-    applyState(inZone, performance.now());
+    const ar=(vid.videoWidth||4)/(vid.videoHeight||3);
+    people=track((res&&res.landmarks)||[], ar, performance.now());
   }
   draw(); readouts();
   requestAnimationFrame(loop);
 }
 
-function applyState(now,t){
-  if(now===present){ pending=null; return; }
-  if(pending!==now){ pending=now; pendingSince=t; return; }
-  if(t-pendingSince<DEBOUNCE) return;
-  present=now; stateSince=t; pending=null;
-}
-
-// ---- render -----------------------------------------------------------
+// ---- render ------------------------------------------------------------
 function size(){
   const r=frame.getBoundingClientRect(), dpr=Math.min(window.devicePixelRatio||1,2);
   ov.width=Math.max(1,Math.round(r.width*dpr));
@@ -285,77 +424,90 @@ window.addEventListener('resize',size); size();
 function draw(){
   const r=frame.getBoundingClientRect(), W=r.width, H=r.height;
   ctx.clearRect(0,0,W,H);
+  if(!running) return;
 
-  for(const b of boxes){
-    const x=b.x*W, y=b.y*H, w=b.w*W, h=b.h*H;
-    ctx.strokeStyle='#2ED3C6'; ctx.lineWidth=2; ctx.strokeRect(x,y,w,h);
-    const cl=Math.min(16,w/3,h/3);
-    ctx.lineWidth=3.5; ctx.beginPath();
-    ctx.moveTo(x,y+cl); ctx.lineTo(x,y); ctx.lineTo(x+cl,y);
-    ctx.moveTo(x+w-cl,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+cl);
-    ctx.moveTo(x,y+h-cl); ctx.lineTo(x,y+h); ctx.lineTo(x+cl,y+h);
-    ctx.moveTo(x+w-cl,y+h); ctx.lineTo(x+w,y+h); ctx.lineTo(x+w,y+h-cl);
-    ctx.stroke();
-    const tag='PERSON '+Math.round(b.s*100)+'%';
-    ctx.font='600 10px ui-monospace,monospace';
-    const tw=ctx.measureText(tag).width;
-    ctx.fillStyle='#2ED3C6'; ctx.fillRect(x,Math.max(0,y-15),tw+10,15);
-    ctx.fillStyle='#04231F'; ctx.fillText(tag,x+5,Math.max(0,y-15)+11);
-    ctx.fillStyle='#2ED3C6';
-    ctx.beginPath(); ctx.arc(x+w/2,y+h,3,0,Math.PI*2); ctx.fill();
+  for(const p of people){
+    const lm=p.lm;
+    const pts=lm.map(l=>({x:l.x*W, y:l.y*H, v:l.visibility===undefined?1:l.visibility}));
+
+    // bounding box from visible landmark extents
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(const q of pts){ if(q.v<0.4) continue;
+      if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
+    if(x1<x0) continue;
+    const padX=(x1-x0)*0.14, padY=(y1-y0)*0.07;
+    x0=Math.max(0,x0-padX); x1=Math.min(W,x1+padX);
+    y0=Math.max(0,y0-padY*2.2); y1=Math.min(H,y1+padY);
+
+    if(showSkel){
+      const scale=Math.max(3,Math.min(16,(y1-y0)*0.045));
+      ctx.lineCap='round'; ctx.lineJoin='round';
+      for(const [a,b,col] of BONES){
+        if(pts[a].v<0.4||pts[b].v<0.4) continue;
+        ctx.strokeStyle=col; ctx.globalAlpha=.82; ctx.lineWidth=scale;
+        ctx.beginPath(); ctx.moveTo(pts[a].x,pts[a].y); ctx.lineTo(pts[b].x,pts[b].y); ctx.stroke();
+      }
+      // head blob from the face landmarks
+      if(pts[NOSE].v>0.4){
+        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.v>0.4);
+        const rad=ears.length===2
+          ? Math.max(scale*1.1,Math.hypot(ears[0].x-ears[1].x,ears[0].y-ears[1].y)*0.62)
+          : scale*1.5;
+        ctx.globalAlpha=.8; ctx.fillStyle='#FF4FD8';
+        ctx.beginPath(); ctx.arc(pts[NOSE].x,pts[NOSE].y-rad*0.18,rad,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha=1;
+    }
+
+    ctx.strokeStyle='#FF3B30'; ctx.lineWidth=2.5;
+    ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+
+    // stacked confidence labels above the box, like a CCTV analytics overlay
+    const labels=p.scores.slice(0,2).map((s,i)=>({
+      text:s[0]+': '+(s[1]*100).toFixed(2)+'%',
+      bg:i===0?'#2E6BFF':'#FF3B30'
+    }));
+    ctx.font='600 12px '+getComputedStyle(document.body).getPropertyValue('--sans');
+    const lh=18;
+    let ly=y0-labels.length*lh-2;
+    if(ly<0) ly=Math.min(y1+4,H-labels.length*lh-2);
+    for(const l of labels){
+      const tw=ctx.measureText(l.text).width;
+      const lx=Math.min(x0,W-tw-12);
+      ctx.fillStyle=l.bg; ctx.fillRect(lx,ly,tw+12,lh);
+      ctx.fillStyle='#fff'; ctx.fillText(l.text,lx+6,ly+13);
+      ly+=lh;
+    }
   }
 
-  const zx=zone.x*W, zy=zone.y*H, zw=zone.w*W, zh=zone.h*H;
-  ctx.save();
-  ctx.setLineDash([7,5]); ctx.lineWidth=1.5;
-  ctx.strokeStyle=present?'#4ADE80':'#F5A524';
-  ctx.strokeRect(zx,zy,zw,zh);
-  ctx.setLineDash([]); ctx.fillStyle=present?'#4ADE80':'#F5A524';
-  ctx.fillRect(zx+zw-15,zy+zh-4,11,3); ctx.fillRect(zx+zw-4,zy+zh-15,3,11);
-  ctx.font='600 9px ui-monospace,monospace';
-  ctx.fillText('DETECTION ZONE',zx+1,zy-5);
-  ctx.restore();
+  ctx.font='500 10px '+getComputedStyle(document.body).getPropertyValue('--mono');
+  ctx.fillStyle='rgba(215,224,232,.8)';
+  ctx.fillText(Math.round(fps)+' FPS  ·  '+people.length+' TRACKED',8,H-9);
 }
 
 const mmss=ms=>{const s=Math.max(0,Math.floor(ms/1000));
   return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
 
-function readouts(){
-  const t=performance.now();
-  $('vState').textContent=present?'PRESENT':'CLEAR';
-  $('vState').className='v '+(present?'on':'off');
-  $('vSince').textContent=mmss(t-stateSince); $('vSince').className='v';
-  $('vCount').textContent=String(boxes.length); $('vCount').className='v';
-  $('vMs').textContent=Math.round(inferMs)+' ms'; $('vMs').className='v';
+function renderChips(list){
+  if(!list.length){ chips.innerHTML='<span class="empty">No signals</span>'; return; }
+  chips.innerHTML=list.map(n=>'<span class="chip hot">'+n+'</span>').join('');
 }
 
-// ---- zone drag / resize ------------------------------------------------
-let drag=null;
-frame.addEventListener('pointerdown',e=>{
-  const r=frame.getBoundingClientRect();
-  const px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
-  const hx=zone.x+zone.w, hy=zone.y+zone.h, hs=Math.max(.055,22/r.width);
-  if(px>hx-hs&&px<hx+hs&&py>hy-hs&&py<hy+hs) drag={mode:'size'};
-  else if(px>zone.x&&px<hx&&py>zone.y&&py<hy) drag={mode:'move',ox:px-zone.x,oy:py-zone.y};
-  else return;
-  frame.setPointerCapture(e.pointerId); e.preventDefault();
-});
-frame.addEventListener('pointermove',e=>{
-  if(!drag) return;
-  const r=frame.getBoundingClientRect();
-  const px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
-  if(drag.mode==='move'){
-    zone.x=Math.min(Math.max(0,px-drag.ox),1-zone.w);
-    zone.y=Math.min(Math.max(0,py-drag.oy),1-zone.h);
+function readouts(){
+  const t=performance.now();
+  const main=people[0];
+  $('vCount').textContent=String(people.length); $('vCount').className='v';
+  $('vMs').textContent=Math.round(inferMs)+' ms'; $('vMs').className='v';
+  if(main){
+    $('vAction').textContent=main.label; $('vAction').className='v';
+    $('vSince').textContent=mmss(t-main.since); $('vSince').className='v';
+    renderChips(Object.keys(main.flags).filter(k=>main.flags[k]));
   }else{
-    zone.w=Math.min(Math.max(.1,px-zone.x),1-zone.x);
-    zone.h=Math.min(Math.max(.1,py-zone.y),1-zone.y);
+    $('vAction').textContent='—'; $('vAction').className='v none';
+    $('vSince').textContent='--:--'; $('vSince').className='v none';
+    renderChips([]);
   }
-  e.preventDefault();
-});
-const endDrag=e=>{ if(drag){ drag=null; try{frame.releasePointerCapture(e.pointerId);}catch(_){} } };
-frame.addEventListener('pointerup',endDrag);
-frame.addEventListener('pointercancel',endDrag);
+}
 </script>
 </body>
 </html>
