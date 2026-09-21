@@ -44,9 +44,18 @@
   .frame{position:relative;width:100%;aspect-ratio:4/3;max-height:100%;background:var(--panel);
     border:1px solid var(--line);border-radius:4px;overflow:hidden}
   .frame video,.frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-  /* Desaturate the feed so the coloured limb overlay reads against it. */
-  .frame video{object-fit:fill;background:var(--panel);filter:grayscale(1) contrast(1.06) brightness(1.04)}
+  /* contain, not fill: in full screen the frame stops matching the video's
+     aspect, and the overlay is mapped through the same letterboxed rect. */
+  .frame video{object-fit:contain;background:#000;filter:grayscale(1) contrast(1.06) brightness(1.04)}
   .frame.plain video{filter:none}
+  .frame.fs,.frame:fullscreen{position:fixed;inset:0;width:100vw;height:100vh;
+    max-height:none;aspect-ratio:auto!important;border:0;border-radius:0;
+    background:#000;z-index:60}
+  .exitfs{position:absolute;top:10px;right:10px;z-index:2;display:none;
+    font:500 12px var(--sans);padding:7px 12px;border-radius:3px;
+    border:1px solid rgba(215,224,232,.35);background:rgba(11,15,20,.72);
+    color:var(--text);cursor:pointer}
+  .frame.fs .exitfs,.frame:fullscreen .exitfs{display:block}
   .hint{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
     align-items:center;justify-content:center;text-align:center;padding:24px;
     color:var(--dim);font-size:13px;background:var(--panel)}
@@ -55,9 +64,9 @@
 
   .chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;min-height:26px;margin-bottom:10px}
   .chip{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
-    padding:6px 9px;border-radius:2px;background:var(--panel-2);
-    border:1px solid var(--line);color:var(--dim)}
-  .chip.hot{background:rgba(46,211,198,.14);border-color:var(--accent);color:var(--accent)}
+    padding:6px 9px;border-radius:2px;background:rgba(46,211,198,.14);
+    border:1px solid var(--accent);color:var(--accent)}
+  .chip.warn{background:rgba(245,165,36,.13);border-color:#F5A524;color:#F5A524}
   .chips .empty{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
     color:var(--dim);padding:6px 0;opacity:.6}
 
@@ -83,6 +92,20 @@
   button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
+  .actions{flex:0 0 auto;border:1px solid var(--line);border-radius:4px;
+    background:var(--panel);margin-bottom:10px}
+  .actions summary{cursor:pointer;padding:9px 11px;font:10px/1.3 var(--mono);
+    letter-spacing:.13em;text-transform:uppercase;color:var(--accent);list-style:none}
+  .actions summary::-webkit-details-marker{display:none}
+  .actions summary::after{content:' +';color:var(--dim)}
+  .actions[open] summary::after{content:' \2212';color:var(--dim)}
+  .actions .body{padding:0 11px 11px;display:grid;gap:10px;
+    grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .actions h3{margin:0 0 5px;font:9px/1.3 var(--mono);letter-spacing:.13em;
+    text-transform:uppercase;color:var(--dim)}
+  .actions ul{margin:0;padding-left:15px;font-size:12px;color:var(--text)}
+  .actions li{margin:1px 0}
+  .actions li span{color:var(--dim)}
   .note{flex:0 0 auto;font-size:11.5px;color:var(--dim);
     padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
   .note b{color:var(--text);font-weight:500}
@@ -105,6 +128,7 @@
     <div class="frame plain" id="frame">
       <video id="vid" playsinline muted autoplay></video>
       <canvas id="ov"></canvas>
+      <button class="exitfs" id="btnExitFs" type="button">Exit full screen</button>
       <div class="hint" id="hint">
         <div class="big" id="hintBig">Loading model</div>
         <p id="hintTxt">Downloading the pose model (~6&nbsp;MB). This happens once, then it is cached.</p>
@@ -126,11 +150,40 @@
     <button id="btnFlip" disabled>Flip</button>
     <button id="btnGray" aria-pressed="false">Grayscale</button>
     <button id="btnSkel" aria-pressed="true">Skeleton</button>
+    <button id="btnFull">Full screen</button>
   </div>
 
+  <details class="actions">
+    <summary>Detectable actions (13)</summary>
+    <div class="body">
+      <div>
+        <h3>Needs hips &amp; knees in frame</h3>
+        <ul>
+          <li>Standing <span>&mdash; upright, knees extended</span></li>
+          <li>Walking <span>&mdash; upright with hip travel</span></li>
+          <li>Sitting <span>&mdash; knees bent, hips at knee height</span></li>
+          <li>Crouching <span>&mdash; knees bent, hips below</span></li>
+          <li>Bending over <span>&mdash; torso tilted forward</span></li>
+          <li>Lying down <span>&mdash; torso near horizontal</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Upper body is enough</h3>
+        <ul>
+          <li>Arms raised <span>&mdash; both wrists above shoulders</span></li>
+          <li>One arm raised</li>
+          <li>Reaching out <span>&mdash; elbow straight, arm out</span></li>
+          <li>Hand to head</li>
+          <li>Leaning <span>&mdash; shoulder line tilted</span></li>
+          <li>Moving / Still <span>&mdash; shoulder-centre velocity</span></li>
+        </ul>
+      </div>
+    </div>
+  </details>
+
   <div class="note" id="note">
-    Actions are derived from <b>joint geometry</b> &mdash; torso angle, knee flexion, limb extension
-    and motion. Everything runs in the browser; no video leaves the device.
+    Actions are derived from <b>joint geometry</b>. Works with only the upper body in frame &mdash;
+    posture actions are suppressed when hips and knees are not visible.
     <br><a href="motion.html">&rarr; Motion-only version (no model download)</a>
   </div>
 </div>
@@ -158,23 +211,22 @@ const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
       hint=$('hint'), hintBig=$('hintBig'), hintTxt=$('hintTxt'),
       btnStart=$('btnStart'), btnFlip=$('btnFlip'),
       btnGray=$('btnGray'), btnSkel=$('btnSkel'),
+      btnFull=$('btnFull'), btnExitFs=$('btnExitFs'),
       beacon=$('beacon'), beaconTxt=$('beaconTxt'),
       note=$('note'), chips=$('chips');
 
-const BASE_NOTE = 'Actions are derived from <b>joint geometry</b> — torso angle, knee flexion, ' +
-  'limb extension and motion. Everything runs in the browser; no video leaves the device.' +
+const BASE_NOTE = 'Actions are derived from <b>joint geometry</b>. Works with only the upper body ' +
+  'in frame — posture actions are suppressed when hips and knees are not visible.' +
   '<br><a href="motion.html">→ Motion-only version (no model download)</a>';
 
 let landmarker=null, running=false, facing='environment', stream=null, lastVideoTime=-1;
-let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true;
+let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true, vidAR=4/3;
 let tracks=[], nextId=1;
 
-// ---- landmark indices --------------------------------------------------
 const NOSE=0, EAR_L=7, EAR_R=8,
       SH_L=11, SH_R=12, EL_L=13, EL_R=14, WR_L=15, WR_R=16,
       HIP_L=23, HIP_R=24, KN_L=25, KN_R=26, AN_L=27, AN_R=28;
 
-// bone -> colour, mimicking a part-segmentation overlay
 const BONES=[
   [SH_L,SH_R,'#2E6BFF'],[SH_L,HIP_L,'#2E6BFF'],[SH_R,HIP_R,'#2E6BFF'],[HIP_L,HIP_R,'#2E6BFF'],
   [SH_L,EL_L,'#FF3B30'],[EL_L,WR_L,'#FF9500'],
@@ -183,7 +235,13 @@ const BONES=[
   [HIP_R,KN_R,'#38BDF8'],[KN_R,AN_R,'#4ADE80']
 ];
 
-// ---- model -------------------------------------------------------------
+// ---- tuning ------------------------------------------------------------
+const VIS=0.35,          // a landmark counts as visible above this
+      SHOW_IN=0.35,      // a label appears above this smoothed score ...
+      SHOW_OUT=0.20,     // ... and only disappears below this (hysteresis)
+      STEAL=0.08,        // margin a challenger needs to take the top slot
+      HOLD=450;          // ms it must keep that margin before committing
+
 try{
   const fileset = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
@@ -194,13 +252,14 @@ try{
     },
     runningMode:"VIDEO",
     numPoses:2,
-    minPoseDetectionConfidence:0.5,
-    minPosePresenceConfidence:0.5,
-    minTrackingConfidence:0.5,
+    // low thresholds so a partially framed body still latches
+    minPoseDetectionConfidence:0.3,
+    minPosePresenceConfidence:0.3,
+    minTrackingConfidence:0.3,
     outputSegmentationMasks:false
   });
   hintBig.textContent="Ready";
-  hintTxt.textContent="Start the camera and step back so your whole body is in frame — the actions below need hips, knees and shoulders visible.";
+  hintTxt.textContent="Start the camera. Upper body alone is enough for arm and lean actions; add hips and knees for standing, walking, sitting and bending.";
   btnStart.disabled=false;
 }catch(e){
   hintBig.className="big err"; hintBig.textContent="Model failed";
@@ -208,7 +267,6 @@ try{
   console.error(e);
 }
 
-// ---- controls ----------------------------------------------------------
 btnStart.addEventListener('click',()=> running?stop():start());
 btnFlip.addEventListener('click',()=>{
   facing = facing==='environment'?'user':'environment';
@@ -222,6 +280,28 @@ btnGray.addEventListener('click',()=>{
 btnSkel.addEventListener('click',()=>{
   showSkel = btnSkel.getAttribute('aria-pressed')!=='true';
   btnSkel.setAttribute('aria-pressed',String(showSkel));
+});
+
+// iPhone Safari has no Element.requestFullscreen, so fall back to a
+// fixed-position class that covers the viewport just as well.
+function isFull(){ return document.fullscreenElement===frame || frame.classList.contains('fs'); }
+function syncFull(){ btnFull.textContent = isFull() ? 'Exit full screen' : 'Full screen'; }
+function toggleFull(){
+  if(isFull()){
+    if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+    frame.classList.remove('fs');
+  }else if(frame.requestFullscreen){
+    frame.requestFullscreen().catch(()=>frame.classList.add('fs'));
+  }else{
+    frame.classList.add('fs');
+  }
+  syncFull(); requestAnimationFrame(size);
+}
+btnFull.addEventListener('click',toggleFull);
+btnExitFs.addEventListener('click',toggleFull);
+document.addEventListener('fullscreenchange',()=>{ syncFull(); requestAnimationFrame(size); });
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && frame.classList.contains('fs')) toggleFull();
 });
 
 async function start(){
@@ -239,7 +319,6 @@ async function start(){
       return;
     }
   }
-  // Attach BEFORE srcObject: metadata can otherwise fire before the handler exists.
   vid.onloadedmetadata=()=>{
     if(vid.videoWidth) frame.style.aspectRatio = vid.videoWidth+'/'+vid.videoHeight;
     size();
@@ -269,12 +348,11 @@ function stop(){
   renderChips([]);
 }
 
-// ---- geometry helpers --------------------------------------------------
+// ---- geometry ----------------------------------------------------------
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const ramp=(v,lo,hi)=>clamp((v-lo)/(hi-lo),0,1);
-
-// x is normalised to width and y to height, so x must be scaled by the
-// aspect ratio before any angle is computed or it comes out skewed.
+// x is normalised to width, y to height — x must be scaled by the aspect
+// ratio before any angle is taken or the result is skewed.
 const P=(l,ar)=>({x:l.x*ar, y:l.y, v:l.visibility===undefined?1:l.visibility});
 const mid=(a,b)=>({x:(a.x+b.x)/2, y:(a.y+b.y)/2, v:Math.min(a.v,b.v)});
 
@@ -285,111 +363,171 @@ function angleAt(a,b,c){
   return Math.acos(clamp((abx*cbx+aby*cby)/m,-1,1))*180/Math.PI;
 }
 
+function partsOf(lm){
+  const v=i=>(lm[i].visibility===undefined?1:lm[i].visibility);
+  const hips =(v(HIP_L)+v(HIP_R))/2 > 0.5;
+  const knees=(v(KN_L)+v(KN_R))/2 > 0.5;
+  return {hips, knees, lower: hips&&knees};
+}
+
 // ---- action scoring ----------------------------------------------------
-// Every score is continuous and derived from measured joint geometry.
-function classify(lm, ar, speed){
+function classify(lm, ar, speed, parts){
   const p=i=>P(lm[i],ar);
-  const shL=p(SH_L), shR=p(SH_R), hipL=p(HIP_L), hipR=p(HIP_R),
-        knL=p(KN_L),  knR=p(KN_R),  anL=p(AN_L),  anR=p(AN_R),
-        elL=p(EL_L),  elR=p(EL_R),  wrL=p(WR_L),  wrR=p(WR_R), nose=p(NOSE);
-  const sh=mid(shL,shR), hip=mid(hipL,hipR), kn=mid(knL,knR);
-  const torsoLen=Math.max(1e-4,Math.hypot(sh.x-hip.x, sh.y-hip.y));
+  const shL=p(SH_L), shR=p(SH_R), elL=p(EL_L), elR=p(EL_R),
+        wrL=p(WR_L), wrR=p(WR_R), nose=p(NOSE);
+  const sh=mid(shL,shR);
+  const shoulderW=Math.max(1e-4,Math.hypot(shL.x-shR.x, shL.y-shR.y));
 
-  // torso tilt away from vertical, 0 = upright
-  const torsoTilt=Math.abs(Math.atan2(sh.x-hip.x, hip.y-sh.y))*180/Math.PI;
+  // Without hips there is no shoulder-to-hip span, so fall back to a
+  // shoulder-width multiple. Every scaled measure below depends on this.
+  let hip=null, torsoLen;
+  if(parts.hips){
+    hip=mid(p(HIP_L),p(HIP_R));
+    torsoLen=Math.max(1e-4,Math.hypot(sh.x-hip.x, sh.y-hip.y));
+  }else{
+    torsoLen=shoulderW*1.45;
+  }
 
-  // knee flexion, 180 = straight leg
-  const kneeVals=[];
-  if(Math.min(hipL.v,knL.v,anL.v)>0.5) kneeVals.push(angleAt(hipL,knL,anL));
-  if(Math.min(hipR.v,knR.v,anR.v)>0.5) kneeVals.push(angleAt(hipR,knR,anR));
-  const knee=kneeVals.length?kneeVals.reduce((a,b)=>a+b,0)/kneeVals.length:180;
+  const raw={};
 
-  // wrist height above its shoulder, in torso lengths
+  // --- upper-body signals, available from shoulders and arms alone ---
   const raiseL=(shL.y-wrL.y)/torsoLen, raiseR=(shR.y-wrR.y)/torsoLen;
-  const raise=Math.max(raiseL,raiseR);
+  const bothUp=Math.min(raiseL,raiseR), oneUp=Math.max(raiseL,raiseR);
+  raw['Arms raised']     = ramp(bothUp,0.02,0.45);
+  raw['One arm raised']  = ramp(oneUp,0.05,0.45)*(1-ramp(bothUp,0.0,0.30));
 
-  // arm extension: straight elbow + wrist far from the body midline
   const extL=ramp(angleAt(shL,elL,wrL),130,170)*ramp(Math.abs(wrL.x-sh.x)/torsoLen,0.5,1.1);
   const extR=ramp(angleAt(shR,elR,wrR),130,170)*ramp(Math.abs(wrR.x-sh.x)/torsoLen,0.5,1.1);
   const reach=Math.max(extL,extR);
+  raw['Reaching out']=reach*(1-ramp(oneUp,0.2,0.5));
 
-  const handHead=Math.max(
+  raw['Hand to head']=Math.max(
     1-ramp(Math.hypot(wrL.x-nose.x,wrL.y-nose.y)/torsoLen,0.25,0.7),
     1-ramp(Math.hypot(wrR.x-nose.x,wrR.y-nose.y)/torsoLen,0.25,0.7));
 
-  const bend=ramp(torsoTilt,28,68);
-  const crouch=1-ramp(knee,108,158);
-  const upright=1-bend;
-  const horizontal=ramp(torsoTilt,62,85);
-  // sitting: knees folded but torso still upright, hips near knee height
-  const hipsAtKnee=1-ramp(Math.abs(hip.y-kn.y)/torsoLen,0.25,0.75);
-  const sit=crouch*upright*hipsAtKnee;
-  const squat=crouch*upright*(1-hipsAtKnee);
-  const walk=ramp(speed,0.05,0.30)*upright*(1-crouch);
-  const stand=upright*(1-crouch)*(1-ramp(speed,0.04,0.16));
+  // shoulder line roll, 0 when level
+  const roll=Math.abs(Math.atan2(shL.y-shR.y, shL.x-shR.x))*180/Math.PI;
+  raw['Leaning']=ramp(Math.min(roll,180-roll),10,32);
 
-  const scores=[
-    ['Lying down',   horizontal*(1-crouch)],
-    ['Bending over', bend*(1-horizontal)*(1-crouch)],
-    ['Sitting',      sit],
-    ['Crouching',    squat],
-    ['Walking',      walk],
-    ['Standing',     stand],
-    ['Arms raised',  ramp(raise,0.05,0.55)],
-    ['Reaching out', reach*(1-bend)],
-    ['Hand to head', handHead]
-  ].filter(s=>s[1]>0.25).sort((a,b)=>b[1]-a[1]);
+  if(parts.lower){
+    const hipL=p(HIP_L), hipR=p(HIP_R), knL=p(KN_L), knR=p(KN_R),
+          anL=p(AN_L), anR=p(AN_R), kn=mid(knL,knR);
+    const torsoTilt=Math.abs(Math.atan2(sh.x-hip.x, hip.y-sh.y))*180/Math.PI;
 
-  return {
-    scores,
-    flags:{
-      'Arms raised': ramp(raise,0.05,0.55)>0.5,
-      'Reaching':    reach>0.5,
-      'Hand to head':handHead>0.55,
-      'Moving':      speed>0.08,
-      'Crouched':    crouch>0.5,
-      'Bent over':   bend>0.5
-    }
-  };
+    const kneeVals=[];
+    if(Math.min(hipL.v,knL.v,anL.v)>VIS) kneeVals.push(angleAt(hipL,knL,anL));
+    if(Math.min(hipR.v,knR.v,anR.v)>VIS) kneeVals.push(angleAt(hipR,knR,anR));
+    const knee=kneeVals.length?kneeVals.reduce((a,b)=>a+b,0)/kneeVals.length:180;
+
+    const bend=ramp(torsoTilt,28,68);
+    const crouch=1-ramp(knee,108,158);
+    const upright=1-bend;
+    const horizontal=ramp(torsoTilt,62,85);
+    const hipsAtKnee=1-ramp(Math.abs(hip.y-kn.y)/torsoLen,0.25,0.75);
+
+    raw['Lying down']   = horizontal*(1-crouch);
+    raw['Bending over'] = bend*(1-horizontal)*(1-crouch);
+    raw['Sitting']      = crouch*upright*hipsAtKnee;
+    raw['Crouching']    = crouch*upright*(1-hipsAtKnee);
+    raw['Walking']      = ramp(speed,0.05,0.30)*upright*(1-crouch);
+    raw['Standing']     = upright*(1-crouch)*(1-ramp(speed,0.04,0.16));
+  }else{
+    // No reliable legs — report only what the upper body supports.
+    const busy=Math.max(raw['Arms raised'],raw['One arm raised'],
+                        raw['Reaching out'],raw['Hand to head'],raw['Leaning']);
+    raw['Moving'] = ramp(speed,0.05,0.28);
+    raw['Still']  = (1-ramp(speed,0.03,0.15))*(1-busy);
+  }
+  return raw;
 }
 
-// ---- per-person tracking ----------------------------------------------
+// ---- tracking, smoothing, label commitment -----------------------------
 function track(lmSets, ar, t){
-  const out=[];
-  const used=new Set();
-  for(const lm of lmSets){
-    const hip=mid(P(lm[HIP_L],ar),P(lm[HIP_R],ar));
-    // nearest previous track wins, so ids and velocity stay stable
-    let best=null, bestD=0.22;
-    for(const tr of tracks){
-      if(used.has(tr.id)) continue;
-      const d=Math.hypot(tr.hip.x-hip.x, tr.hip.y-hip.y);
-      if(d<bestD){ bestD=d; best=tr; }
+  const out=[], used=new Set();
+
+  for(const rawLm of lmSets){
+    const p0=partsOf(rawLm);
+    const aRaw = p0.hips ? mid(P(rawLm[HIP_L],ar),P(rawLm[HIP_R],ar))
+                         : mid(P(rawLm[SH_L],ar),P(rawLm[SH_R],ar));
+
+    let tr=null, bestD=0.30;
+    for(const c of tracks){
+      if(used.has(c.id)) continue;
+      const d=Math.hypot(c.anchor.x-aRaw.x, c.anchor.y-aRaw.y);
+      if(d<bestD){ bestD=d; tr=c; }
     }
-    let speed=0;
-    if(best){
-      const dt=Math.max(1e-3,(t-best.t)/1000);
-      const raw=Math.hypot(hip.x-best.hip.x, hip.y-best.hip.y)/dt;
-      speed=best.speed*0.7+raw*0.3;          // EMA, raw frame speed is noisy
-      best.hip=hip; best.t=t; best.speed=speed;
-      used.add(best.id);
+    if(!tr){
+      tr={id:nextId++, anchor:aRaw, t, speed:0, sm:null, sc:{}, shown:{},
+          label:null, cand:null, candAt:t, since:t};
+      tracks.push(tr);
+    }
+    used.add(tr.id);
+
+    const dt=Math.max(1e-3,(t-tr.t)/1000);
+
+    // Adaptive EMA on every landmark: heavy smoothing when a joint is
+    // nearly still (kills jitter), light when it moves fast (stays responsive).
+    if(!tr.sm){
+      tr.sm=rawLm.map(l=>({x:l.x, y:l.y, visibility:l.visibility===undefined?1:l.visibility}));
     }else{
-      best={id:nextId++, hip, t, speed:0, label:null, cand:null, candAt:t, since:t};
-      tracks.push(best); used.add(best.id);
+      for(let i=0;i<rawLm.length;i++){
+        const s=tr.sm[i], r=rawLm[i];
+        const a=clamp(0.22+Math.hypot(r.x-s.x, r.y-s.y)*14, 0.22, 0.90);
+        s.x+=(r.x-s.x)*a; s.y+=(r.y-s.y)*a;
+        const rv=r.visibility===undefined?1:r.visibility;
+        s.visibility+=(rv-s.visibility)*0.25;
+      }
     }
-    const res=classify(lm, ar, speed);
-    const top=res.scores[0]||['Unclear',0];
+    const lm=tr.sm, parts=partsOf(lm);
 
-    // hold a new label for 400ms before committing, or it flickers
-    if(best.label!==top[0]){
-      if(best.cand!==top[0]){ best.cand=top[0]; best.candAt=t; }
-      else if(t-best.candAt>400){ best.label=top[0]; best.since=t; best.cand=null; }
-    }else best.cand=null;
+    const anchor = parts.hips ? mid(P(lm[HIP_L],ar),P(lm[HIP_R],ar))
+                              : mid(P(lm[SH_L],ar),P(lm[SH_R],ar));
+    const vRaw=Math.hypot(anchor.x-tr.anchor.x, anchor.y-tr.anchor.y)/dt;
+    tr.speed=tr.speed*0.75+vRaw*0.25;
+    tr.anchor=anchor; tr.t=t;
 
-    out.push({lm, id:best.id, label:best.label||top[0], since:best.since,
-              scores:res.scores, flags:res.flags});
+    // smooth each score so the percentages stop twitching
+    const raw=classify(lm, ar, tr.speed, parts);
+    for(const k in raw){
+      const prev = tr.sc[k]===undefined ? raw[k] : tr.sc[k];
+      tr.sc[k] = prev + (raw[k]-prev)*0.18;
+    }
+    // actions that no longer apply (legs left the frame) decay away
+    for(const k in tr.sc) if(!(k in raw)) tr.sc[k]*=0.80;
+
+    const ranked=Object.keys(tr.sc).map(k=>[k,tr.sc[k]]).sort((a,b)=>b[1]-a[1]);
+    for(const [k,v] of ranked){
+      if(v>SHOW_IN) tr.shown[k]=true;
+      else if(v<SHOW_OUT) delete tr.shown[k];
+    }
+    const visible=ranked.filter(r=>tr.shown[r[0]]);
+    const top=visible[0]||ranked[0]||['Unclear',0];
+
+    // A challenger must beat the incumbent by STEAL and keep it for HOLD ms.
+    if(tr.label===null){
+      tr.label=top[0]; tr.since=t;
+    }else if(tr.label!==top[0]){
+      if(top[1] > (tr.sc[tr.label]||0)+STEAL){
+        if(tr.cand!==top[0]){ tr.cand=top[0]; tr.candAt=t; }
+        else if(t-tr.candAt>HOLD){ tr.label=top[0]; tr.since=t; tr.cand=null; }
+      }else tr.cand=null;
+    }else tr.cand=null;
+
+    const second=visible.find(r=>r[0]!==tr.label);
+    const display=[[tr.label, tr.sc[tr.label]||0]];
+    if(second && second[1]>SHOW_IN) display.push(second);
+
+    const flags=[];
+    if(tr.sc['Arms raised']>0.5||tr.sc['One arm raised']>0.5) flags.push('Arms raised');
+    if(tr.sc['Reaching out']>0.5) flags.push('Reaching');
+    if(tr.sc['Hand to head']>0.5) flags.push('Hand to head');
+    if(tr.sc['Leaning']>0.5) flags.push('Leaning');
+    if(tr.speed>0.09) flags.push('Moving');
+
+    out.push({lm, id:tr.id, label:tr.label, since:tr.since, display, flags, parts});
   }
-  tracks=tracks.filter(tr=>used.has(tr.id)||t-tr.t<1500);
+
+  tracks=tracks.filter(c=>used.has(c.id)||t-c.t<1500);
   return out;
 }
 
@@ -406,6 +544,7 @@ function loop(ts){
     try{ res=landmarker.detectForVideo(vid,t0); }catch(_){}
     inferMs=inferMs*0.8+(performance.now()-t0)*0.2;
     const ar=(vid.videoWidth||4)/(vid.videoHeight||3);
+    vidAR=ar;
     people=track((res&&res.landmarks)||[], ar, performance.now());
   }
   draw(); readouts();
@@ -413,6 +552,14 @@ function loop(ts){
 }
 
 // ---- render ------------------------------------------------------------
+// Where the video actually sits inside the frame once object-fit:contain
+// letterboxes it. Every overlay coordinate is mapped through this.
+function fitRect(W,H,ar){
+  let w=W, h=W/ar;
+  if(h>H){ h=H; w=H*ar; }
+  return {ox:(W-w)/2, oy:(H-h)/2, w, h};
+}
+
 function size(){
   const r=frame.getBoundingClientRect(), dpr=Math.min(window.devicePixelRatio||1,2);
   ov.width=Math.max(1,Math.round(r.width*dpr));
@@ -425,31 +572,31 @@ function draw(){
   const r=frame.getBoundingClientRect(), W=r.width, H=r.height;
   ctx.clearRect(0,0,W,H);
   if(!running) return;
+  const sans=getComputedStyle(document.body).getPropertyValue('--sans');
+  const mono=getComputedStyle(document.body).getPropertyValue('--mono');
+  const f=fitRect(W,H,vidAR);
 
   for(const p of people){
-    const lm=p.lm;
-    const pts=lm.map(l=>({x:l.x*W, y:l.y*H, v:l.visibility===undefined?1:l.visibility}));
+    const pts=p.lm.map(l=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h, v:l.visibility}));
 
-    // bounding box from visible landmark extents
     let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
-    for(const q of pts){ if(q.v<0.4) continue;
+    for(const q of pts){ if(q.v<VIS) continue;
       if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
     if(x1<x0) continue;
     const padX=(x1-x0)*0.14, padY=(y1-y0)*0.07;
-    x0=Math.max(0,x0-padX); x1=Math.min(W,x1+padX);
-    y0=Math.max(0,y0-padY*2.2); y1=Math.min(H,y1+padY);
+    x0=Math.max(f.ox,x0-padX); x1=Math.min(f.ox+f.w,x1+padX);
+    y0=Math.max(f.oy,y0-padY*2.2); y1=Math.min(f.oy+f.h,y1+padY);
 
     if(showSkel){
       const scale=Math.max(3,Math.min(16,(y1-y0)*0.045));
       ctx.lineCap='round'; ctx.lineJoin='round';
       for(const [a,b,col] of BONES){
-        if(pts[a].v<0.4||pts[b].v<0.4) continue;
+        if(pts[a].v<VIS||pts[b].v<VIS) continue;   // partial bodies draw what they have
         ctx.strokeStyle=col; ctx.globalAlpha=.82; ctx.lineWidth=scale;
         ctx.beginPath(); ctx.moveTo(pts[a].x,pts[a].y); ctx.lineTo(pts[b].x,pts[b].y); ctx.stroke();
       }
-      // head blob from the face landmarks
-      if(pts[NOSE].v>0.4){
-        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.v>0.4);
+      if(pts[NOSE].v>VIS){
+        const ears=[pts[EAR_L],pts[EAR_R]].filter(q=>q.v>VIS);
         const rad=ears.length===2
           ? Math.max(scale*1.1,Math.hypot(ears[0].x-ears[1].x,ears[0].y-ears[1].y)*0.62)
           : scale*1.5;
@@ -462,25 +609,29 @@ function draw(){
     ctx.strokeStyle='#FF3B30'; ctx.lineWidth=2.5;
     ctx.strokeRect(x0,y0,x1-x0,y1-y0);
 
-    // stacked confidence labels above the box, like a CCTV analytics overlay
-    const labels=p.scores.slice(0,2).map((s,i)=>({
-      text:s[0]+': '+(s[1]*100).toFixed(2)+'%',
-      bg:i===0?'#2E6BFF':'#FF3B30'
-    }));
-    ctx.font='600 12px '+getComputedStyle(document.body).getPropertyValue('--sans');
+    // committed label first, so these no longer re-rank every frame
+    ctx.font='600 12px '+sans;
     const lh=18;
-    let ly=y0-labels.length*lh-2;
-    if(ly<0) ly=Math.min(y1+4,H-labels.length*lh-2);
-    for(const l of labels){
-      const tw=ctx.measureText(l.text).width;
-      const lx=Math.min(x0,W-tw-12);
-      ctx.fillStyle=l.bg; ctx.fillRect(lx,ly,tw+12,lh);
-      ctx.fillStyle='#fff'; ctx.fillText(l.text,lx+6,ly+13);
+    let ly=y0-p.display.length*lh-2;
+    if(ly<f.oy) ly=Math.min(y1+4,f.oy+f.h-p.display.length*lh-2);
+    p.display.forEach((d,i)=>{
+      const text=d[0]+': '+(d[1]*100).toFixed(1)+'%';
+      const tw=ctx.measureText(text).width;
+      const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-tw-12));
+      ctx.fillStyle=i===0?'#2E6BFF':'#FF3B30';
+      ctx.fillRect(lx,ly,tw+12,lh);
+      ctx.fillStyle='#fff'; ctx.fillText(text,lx+6,ly+13);
       ly+=lh;
+    });
+
+    if(!p.parts.lower){
+      ctx.font='600 9px '+mono;
+      ctx.fillStyle='#F5A524';
+      ctx.fillText('UPPER BODY',x0+1,Math.min(f.oy+f.h-3,y1+11));
     }
   }
 
-  ctx.font='500 10px '+getComputedStyle(document.body).getPropertyValue('--mono');
+  ctx.font='500 10px '+mono;
   ctx.fillStyle='rgba(215,224,232,.8)';
   ctx.fillText(Math.round(fps)+' FPS  ·  '+people.length+' TRACKED',8,H-9);
 }
@@ -490,18 +641,19 @@ const mmss=ms=>{const s=Math.max(0,Math.floor(ms/1000));
 
 function renderChips(list){
   if(!list.length){ chips.innerHTML='<span class="empty">No signals</span>'; return; }
-  chips.innerHTML=list.map(n=>'<span class="chip hot">'+n+'</span>').join('');
+  chips.innerHTML=list.map(c=>'<span class="chip'+(c.warn?' warn':'')+'">'+c.text+'</span>').join('');
 }
 
 function readouts(){
-  const t=performance.now();
-  const main=people[0];
+  const t=performance.now(), main=people[0];
   $('vCount').textContent=String(people.length); $('vCount').className='v';
   $('vMs').textContent=Math.round(inferMs)+' ms'; $('vMs').className='v';
   if(main){
     $('vAction').textContent=main.label; $('vAction').className='v';
     $('vSince').textContent=mmss(t-main.since); $('vSince').className='v';
-    renderChips(Object.keys(main.flags).filter(k=>main.flags[k]));
+    const list=main.flags.map(f=>({text:f}));
+    if(!main.parts.lower) list.push({text:'Upper body only',warn:true});
+    renderChips(list);
   }else{
     $('vAction').textContent='—'; $('vAction').className='v none';
     $('vSince').textContent='--:--'; $('vSince').className='v none';
