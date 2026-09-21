@@ -137,6 +137,29 @@
   /* gesture panel — ids and inner classes are written by the JS */
   .aux{display:none}
   .aux.on{display:block}
+  .lp{display:none}
+  .lp.on{display:block}
+  .lp h4{margin:0 0 10px;font:500 10px var(--mono);letter-spacing:.13em;
+    text-transform:uppercase;color:var(--muted);
+    display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .lp .score{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+  .lp .score b{font:600 30px/1 var(--sans);letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+  .lp .score span{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}
+  .lp .meter{height:5px;border-radius:99px;background:var(--surface-3);
+    overflow:hidden;margin:9px 0 12px}
+  .lp .meter i{display:block;height:100%;border-radius:99px;transition:width .2s ease}
+  .lp .cue{display:flex;align-items:center;gap:9px;margin:6px 0;font:11.5px var(--mono)}
+  .lp .cue .n{width:9.4em;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--muted)}
+  .lp .cue.hot .n{color:var(--text)}
+  .lp .cue .b{flex:1 1 auto;height:4px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+  .lp .cue .b i{display:block;height:100%;border-radius:99px;background:var(--faint);
+    transition:width .2s ease}
+  .lp .cue.hot .b i{background:var(--warn)}
+  .lp .disclaim{margin:12px 0 0;padding-top:11px;border-top:1px solid var(--border-soft);
+    font-size:11.5px;line-height:1.55;color:var(--faint)}
+  .lp .disclaim b{color:var(--warn);font-weight:500}
   .aux h4{margin:0 0 11px;font:500 10px var(--mono);letter-spacing:.13em;
     text-transform:uppercase;color:var(--warn);
     display:flex;justify-content:space-between;gap:10px;align-items:baseline}
@@ -215,6 +238,7 @@
           <button class="btn" id="btnSkel" aria-pressed="true">Skeleton</button>
           <button class="btn" id="btnGest" aria-pressed="false">Hand gestures</button>
         </div>
+        <button class="btn" id="btnLP" aria-pressed="false">Behaviour cues</button>
         <button class="btn" id="btnGray" aria-pressed="false">Grayscale</button>
       </div>
     </section>
@@ -238,6 +262,18 @@
       <div class="card aux" id="aux">
         <h4><span>Gesture classifier</span><em id="auxMeta">&mdash;</em></h4>
         <div id="auxBody"><div class="msg">Loading&hellip;</div></div>
+      </div>
+
+      <div class="card lp" id="lp">
+        <h4><span>Behavioural cues</span><em id="lpMeta">&mdash;</em></h4>
+        <div class="score"><b id="lpScore">0</b><span id="lpBand">no cues</span></div>
+        <div class="meter"><i id="lpMeter" style="width:0%"></i></div>
+        <div id="lpCues"></div>
+        <p class="disclaim">
+          <b>Cues for human review only.</b> This reads body movement — it cannot see
+          objects or know intent, and ordinary shopping scores here. Never treat a score
+          as evidence of theft.
+        </p>
       </div>
 
       <details class="actions">
@@ -312,6 +348,8 @@ const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
       btnGray=$('btnGray'), btnSkel=$('btnSkel'), btnBox=$('btnBox'),
       btnFull=$('btnFull'), btnExitFs=$('btnExitFs'), btnGest=$('btnGest'),
       aux=$('aux'), auxBody=$('auxBody'), auxMeta=$('auxMeta'),
+      btnLP=$('btnLP'), lp=$('lp'), lpScore=$('lpScore'), lpBand=$('lpBand'),
+      lpMeter=$('lpMeter'), lpCues=$('lpCues'), lpMeta=$('lpMeta'),
       beacon=$('beacon'), beaconTxt=$('beaconTxt'),
       note=$('note'), chips=$('chips');
 
@@ -320,7 +358,8 @@ const BASE_NOTE = 'Actions are derived from <b>joint geometry</b>. Works with on
   '<br><a href="motion.html">→ Motion-only version (no model download)</a>';
 
 let landmarker=null, running=false, facing='environment', stream=null, lastVideoTime=-1;
-let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true, showBox=true, vidAR=4/3;
+let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true, showBox=true,
+    lpOn=false, vidAR=4/3;
 let tracks=[], nextId=1;
 
 const NOSE=0, EAR_L=7, EAR_R=8,
@@ -636,6 +675,79 @@ function classify(lm, ar, motion, parts, torsoLen){
   return raw;
 }
 
+// ---- behavioural cues --------------------------------------------------
+// Movement patterns that correlate with concealment. None of them observe an
+// object, and every one also describes ordinary shopping, so this produces a
+// figure for a person to look at — never a conclusion about anyone.
+const CUE_W={
+  'Hand at waist':0.32, 'Hand out of sight':0.22, 'Repeated reaching':0.15,
+  'Lingering':0.12, 'Looking around':0.11, 'Turned away':0.08
+};
+
+function behaviourCues(tr, lm, ar, parts, torsoLen, dt, t){
+  if(!tr.lp) tr.lp={conceal:0, hidden:0, dwell:0, ext:{L:false,R:false},
+                    events:[], nose:[], score:undefined, cues:{}};
+  const L=tr.lp, q=i=>P(lm[i],ar);
+  const shL=q(SH_L), shR=q(SH_R), sh=mid(shL,shR);
+  const wrL=q(WR_L), wrR=q(WR_R), nose=q(NOSE);
+  const shW=Math.hypot(shL.x-shR.x, shL.y-shR.y);
+  const hip=parts.hips ? mid(q(HIP_L),q(HIP_R)) : null;
+
+  // A wrist down at the waistband or a jacket opening.
+  let conceal=0;
+  if(hip){
+    for(const w of [wrL,wrR]){
+      if(w.v<0.4) continue;
+      const d=Math.hypot(w.x-hip.x, w.y-hip.y)/torsoLen;
+      if(w.y>sh.y) conceal=Math.max(conceal, 1-ramp(d,0.30,0.85));
+    }
+  }
+  // A hand vanishing while the torso stays plainly visible: behind the back,
+  // inside clothing, or inside a bag.
+  const torsoVis=Math.min(shL.v,shR.v);
+  const hidden = torsoVis>0.6 ? Math.max(1-wrL.v, 1-wrR.v)*torsoVis : 0;
+
+  // Reach out and back, counted as completed cycles over 20s.
+  for(const [k,w] of [['L',wrL],['R',wrR]]){
+    const out = w.v>0.4 && Math.hypot(w.x-sh.x, w.y-sh.y)/torsoLen>0.95;
+    if(out!==L.ext[k]){ if(!out) L.events.push(t); L.ext[k]=out; }
+  }
+  while(L.events.length && t-L.events[0]>20000) L.events.shift();
+
+  // Standing about in one spot.
+  L.dwell = (tr.motion!==undefined && tr.motion<0.30)
+    ? Math.min(40, L.dwell+dt) : Math.max(0, L.dwell-dt*2);
+
+  // Head swinging side to side — range over 4s, not path length, so jitter
+  // does not accumulate into a false reading.
+  L.nose.push({t, x:(nose.x-sh.x)/Math.max(1e-4,torsoLen)});
+  while(L.nose.length>1 && t-L.nose[0].t>4000) L.nose.shift();
+  let mn=1e9, mx=-1e9;
+  for(const n of L.nose){ if(n.x<mn)mn=n.x; if(n.x>mx)mx=n.x; }
+  const scan = L.nose.length>5 ? ramp(mx-mn,0.18,0.55) : 0;
+
+  // Shoulders narrowing relative to torso length means the body has rotated.
+  const turned = 1-ramp(shW/Math.max(1e-4,torsoLen),0.34,0.66);
+
+  // Sustained contact counts; a single frame does not.
+  L.conceal = clamp(L.conceal + (conceal>0.5 ?  dt : -dt*0.8), 0, 6);
+  L.hidden  = clamp(L.hidden  + (hidden >0.5 ?  dt : -dt*0.8), 0, 6);
+
+  const cues={
+    'Hand at waist'    : ramp(L.conceal,0.5,3.0),
+    'Hand out of sight': ramp(L.hidden ,0.6,3.0),
+    'Repeated reaching': ramp(L.events.length,2,7),
+    'Lingering'        : ramp(L.dwell,6,22),
+    'Looking around'   : scan,
+    'Turned away'      : turned
+  };
+  let raw=0;
+  for(const k in cues) raw += cues[k]*CUE_W[k];
+  L.score = L.score===undefined ? raw : L.score+(raw-L.score)*0.10;
+  L.cues = cues;
+  return L;
+}
+
 // ---- tracking, smoothing, label commitment -----------------------------
 function track(lmSets, ar, t){
   const out=[];
@@ -819,6 +931,8 @@ function track(lmSets, ar, t){
     const display=[[tr.label, tr.sc[tr.label]||0]];
     if(second && second[1]>SHOW_IN) display.push(second);
 
+    const lpData = lpOn ? behaviourCues(tr, lm, ar, parts, torsoLen, dt, t) : null;
+
     const flags=[];
     if(tr.sc['Arms raised']>0.5||tr.sc['One arm raised']>0.5) flags.push('Arms raised');
     if(tr.sc['Reaching out']>0.5) flags.push('Reaching');
@@ -827,7 +941,7 @@ function track(lmSets, ar, t){
     if(tr.motion>0.50) flags.push('Moving');
 
     out.push({lm, id:tr.id, label:tr.label, since:tr.since, display, flags, parts,
-              box:tr.box, vset:tr.vset});
+              box:tr.box, vset:tr.vset, lp:lpData});
   }
 
   tracks=tracks.filter(c=>used.has(c.id)||t-c.t<KEEP);
@@ -902,7 +1016,7 @@ function syncPeople(dt){
     if(!r){
       r={pts:new Float32Array(pr.lm.length*2), vis:new Float32Array(pr.lm.length),
          box:{x0:pr.box.x0,y0:pr.box.y0,x1:pr.box.x1,y1:pr.box.y1},
-         alpha:0, disp:[], lower:pr.parts.lower};
+         alpha:0, disp:[], lower:pr.parts.lower, lpScore:pr.lp?pr.lp.score:0};
       for(let n=0;n<pr.lm.length;n++){
         r.pts[n*2]=pr.lm[n].x; r.pts[n*2+1]=pr.lm[n].y; r.vis[n]=pr.vset[n];
       }
@@ -918,6 +1032,7 @@ function syncPeople(dt){
       r.box.y0+=(pr.box.y0-r.box.y0)*kB; r.box.y1+=(pr.box.y1-r.box.y1)*kB;
     }
     r.lower=pr.parts.lower;
+    r.lpScore += ((pr.lp?pr.lp.score:0) - r.lpScore)*kV;
     // ease the printed percentages too, so the digits stop twitching
     const next=pr.display.map(d=>({name:d[0], val:d[1]}));
     for(let n=0;n<next.length;n++){
@@ -1013,7 +1128,9 @@ function draw(){
 
     if(showBox){
       const rad=Math.max(4,Math.min(14,bw*0.10,bh*0.05));
-      ctx.fillStyle='#FF453A'; ctx.strokeStyle='#FF453A';
+      const flagged = lpOn && r.lpScore>0.45;
+      const boxCol = flagged ? '#FBBF24' : '#FF453A';
+      ctx.fillStyle=boxCol; ctx.strokeStyle=boxCol;
       ctx.globalAlpha=A*0.045; rrect(ctx,x0,y0,bw,bh,rad); ctx.fill();
       ctx.globalAlpha=A*0.42;  ctx.lineWidth=1.5;
       rrect(ctx,x0,y0,bw,bh,rad); ctx.stroke();
@@ -1042,7 +1159,7 @@ function draw(){
         const total=tw+pw+24;
         const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-total));
         ctx.globalAlpha=A;
-        ctx.fillStyle = n===0 ? '#2E6BFF' : '#FF453A';
+        ctx.fillStyle = n===0 ? (flagged?'#B45309':'#2E6BFF') : boxCol;
         rrect(ctx,lx,ly,total,lh,6); ctx.fill();
         ctx.fillStyle='#fff';
         ctx.font='600 12px '+sans; ctx.fillText(d.name,lx+9,ly+14.5);
@@ -1051,6 +1168,14 @@ function draw(){
         ly+=lh+gap;
       });
 
+      if(flagged){
+        const tag='REVIEW  '+Math.round(r.lpScore*100);
+        ctx.font='600 10px '+mono;
+        const tw=ctx.measureText(tag).width;
+        ctx.globalAlpha=A; ctx.fillStyle='#FBBF24';
+        rrect(ctx,x1-tw-16,y0+6,tw+12,17,5); ctx.fill();
+        ctx.fillStyle='#231400'; ctx.fillText(tag,x1-tw-10,y0+18);
+      }
       if(!r.lower){
         ctx.globalAlpha=A*0.9;
         ctx.font='600 9px '+mono; ctx.fillStyle='#FBBF24';
@@ -1107,7 +1232,40 @@ function renderChips(list){
   chips.innerHTML=list.map(c=>'<span class="chip'+(c.warn?' warn':'')+'">'+c.text+'</span>').join('');
 }
 
+btnLP.addEventListener('click',()=>{
+  lpOn = btnLP.getAttribute('aria-pressed')!=='true';
+  btnLP.setAttribute('aria-pressed',String(lpOn));
+  lp.classList.toggle('on',lpOn);
+});
+
+function renderLP(){
+  if(!lpOn) return;
+  // highest-scoring person in frame, since that is the one worth a look
+  let best=null;
+  for(const pr of people) if(pr.lp && (!best || pr.lp.score>best.lp.score)) best=pr;
+  if(!best){
+    lpMeta.textContent='no one in frame';
+    lpScore.textContent='0'; lpScore.style.color='var(--faint)';
+    lpBand.textContent='no cues'; lpBand.style.color='var(--faint)';
+    lpMeter.style.width='0%'; lpCues.innerHTML='';
+    return;
+  }
+  const sc=best.lp.score, pct=Math.round(sc*100);
+  const band = sc>0.62 ? ['worth a look','#F87171']
+             : sc>0.45 ? ['some cues','#FBBF24']
+             : sc>0.22 ? ['low','#A1A1AA'] : ['no cues','#71717A'];
+  lpMeta.textContent='person '+best.id+' of '+people.length;
+  lpScore.textContent=String(pct); lpScore.style.color=band[1];
+  lpBand.textContent=band[0];      lpBand.style.color=band[1];
+  lpMeter.style.width=pct+'%';     lpMeter.style.background=band[1];
+  const rows=Object.entries(best.lp.cues).sort((a,b)=>b[1]-a[1]);
+  lpCues.innerHTML=rows.map(([n,v])=>
+    '<div class="cue'+(v>0.5?' hot':'')+'"><span class="n">'+n+'</span>'+
+    '<span class="b"><i style="width:'+(v*100).toFixed(0)+'%"></i></span></div>').join('');
+}
+
 function readouts(){
+  renderLP();
   const t=performance.now(), main=people[0];
   $('vCount').textContent=String(people.length); $('vCount').className='v';
   $('vMs').textContent=Math.round(inferMs)+' ms'; $('vMs').className='v';

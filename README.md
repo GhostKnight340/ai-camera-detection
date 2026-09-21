@@ -112,3 +112,51 @@ uploads; nothing credible is browser-ready today.
 
 Until that export exists, posture stays on the geometry heuristics, which are
 built on MediaPipe Pose — itself a proven production model.
+
+## Behavioural cues (loss prevention)
+
+Press **Behaviour cues**. Six pose-derived signals are scored per person and
+combined into a 0-100 figure, with the highest-scoring person shown in the rail
+and flagged amber on the video above 45.
+
+| Cue | Weight | Measured as |
+|---|---|---|
+| Hand at waist | 0.32 | wrist within 0.3–0.85 torso lengths of the hip midpoint, below the shoulder line, sustained |
+| Hand out of sight | 0.22 | wrist visibility collapsing while both shoulders stay clearly visible |
+| Repeated reaching | 0.15 | completed reach-and-retract cycles over 20 s |
+| Lingering | 0.12 | seconds accumulated below the motion threshold |
+| Looking around | 0.11 | range of nose offset from shoulder centre over 4 s |
+| Turned away | 0.08 | shoulder width shrinking relative to torso length |
+
+Weights sum to 1.0. All distances are in torso lengths, so the score does not
+change with distance from the camera. Sustained contact accumulates and decays
+at 0.8x, so a single frame cannot move the score.
+
+### What this is not
+
+It does not see objects. It cannot observe an item leaving a shelf, entering a
+pocket or crossing a threshold, and it has no concept of payment. It infers
+nothing about intent.
+
+Every cue also describes ordinary shopping. Putting a phone away scores "hand
+at waist". Crouching at a low shelf scores "lingering" and "hand out of sight".
+Looking for a staff member scores "looking around". Expect a high false
+positive rate — that is inherent to the method, not a tuning problem.
+
+Treat the number as a prompt to look at a camera, never as evidence. Acting on
+it directly would mean accusing people of theft on the basis of body posture,
+which is both wrong and legally hazardous. Detaining someone on that basis
+creates liability regardless of what the software displayed.
+
+### Before deploying it anywhere
+
+Filming identifiable people for behavioural analysis is regulated. In Morocco
+that means Law 09-08 and a CNDP declaration; in the EU, GDPR, where scoring
+individuals by behaviour invites Article 22 and DPIA obligations. Retail loss
+prevention also has a long documented record of biased application, and a
+system that directs staff attention will reproduce whatever bias is in how it
+is used. Get legal advice specific to your jurisdiction before any live use.
+
+A genuinely reliable concealment detector needs object tracking — seeing the
+item itself — which means a trained detector for the merchandise and a model
+of item-to-person transfer. That is a different and much larger project.
