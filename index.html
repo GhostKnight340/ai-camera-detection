@@ -4,13 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Action Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
   :root{
-    --ink:#0B0F14;--panel:#141B23;--panel-2:#1B242E;--line:#243140;
-    --text:#D7E0E8;--dim:#7C8C9C;--accent:#2ED3C6;
-    --on:#4ADE80;--bad:#F2555A;
-    --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --bg:#09090B; --surface:#111113; --surface-2:#18181C; --surface-3:#202027;
+    --border:#232329; --border-soft:#1B1B20;
+    --text:#F4F4F5; --muted:#A1A1AA; --faint:#71717A;
+    --accent:#2DD4BF; --accent-dim:#134E4A; --accent-ink:#04231F;
+    --live:#4ADE80; --warn:#FBBF24; --danger:#F87171;
+    --sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r-card:12px; --r-ctl:8px;
     color-scheme:dark;
     padding-top:env(safe-area-inset-top,0px);
   }
@@ -19,201 +25,264 @@
      .hint{display:flex} keeps the overlay pinned over the video. */
   [hidden]{display:none!important}
   img{max-width:100%}
-  html,body{height:100%}
-  body{margin:0;background:var(--ink);color:var(--text);font:14px/1.45 var(--sans)}
-  #app{height:100%;display:flex;flex-direction:column;max-width:900px;margin:0 auto;padding-inline:16px}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 var(--sans);letter-spacing:-.005em;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent);color:var(--accent-ink)}
 
-  header{display:flex;align-items:center;gap:10px;padding-block:14px 12px;
-    border-bottom:1px solid var(--line);flex:0 0 auto}
-  .mark{width:26px;height:26px;border:1.5px solid var(--accent);border-radius:3px;
-    position:relative;flex:0 0 auto}
-  .mark::after{content:"";position:absolute;inset:6px;border-radius:1px;
-    background:var(--accent);opacity:.55}
-  h1{font-size:15px;font-weight:600;margin:0}
-  .sub{font:10px/1.4 var(--mono);color:var(--dim);letter-spacing:.14em;text-transform:uppercase}
-  .hgroup{flex:1 1 auto;min-width:0}
-  .beacon{display:flex;align-items:center;gap:7px;font:10px/1 var(--mono);
-    letter-spacing:.12em;text-transform:uppercase;color:var(--dim);flex:0 0 auto}
-  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
-  .beacon.on{color:var(--on)}
-  .beacon.on .dot{background:var(--on);animation:pulse 2s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  @media (prefers-reduced-motion:reduce){.beacon.on .dot{animation:none}}
+  .app{max-width:1220px;margin:0 auto;padding-inline:20px;
+       padding-bottom:calc(36px + env(safe-area-inset-bottom,0px))}
+  @media (max-width:560px){ .app{padding-inline:16px} }
 
-  .stage{flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-height:0;padding-block:12px}
-  .frame{position:relative;width:100%;aspect-ratio:4/3;max-height:100%;background:var(--panel);
-    border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  /* ---------- top bar ---------- */
+  .topbar{display:flex;align-items:center;gap:14px;padding-block:20px 18px;
+    border-bottom:1px solid var(--border-soft);margin-bottom:22px}
+  .brand{display:flex;align-items:center;gap:11px;flex:1 1 auto;min-width:0}
+  .logo{width:30px;height:30px;border-radius:8px;flex:0 0 auto;position:relative;
+    background:var(--surface-2);border:1px solid var(--border)}
+  .logo::before,.logo::after{content:"";position:absolute;border-radius:1px;background:var(--accent)}
+  .logo::before{inset:8px 8px auto 8px;height:2px;opacity:.9}
+  .logo::after{inset:13px 8px 8px 8px;border-radius:2px;opacity:.28}
+  .brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .brand .tag{margin:0;font-size:12.5px;color:var(--faint);letter-spacing:0}
+  .status{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;
+    padding:6px 11px;border-radius:999px;border:1px solid var(--border);
+    background:var(--surface);font:500 11px var(--mono);
+    letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+  .status .dot{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+  .status.on{color:var(--live);border-color:rgba(74,222,128,.28);background:rgba(74,222,128,.07)}
+  .status.on .dot{background:var(--live);box-shadow:0 0 0 3px rgba(74,222,128,.16);
+    animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @media (prefers-reduced-motion:reduce){.status.on .dot{animation:none}}
+
+  /* ---------- layout ---------- */
+  .layout{display:grid;gap:18px;grid-template-columns:minmax(0,1fr);align-items:start}
+  @media (min-width:980px){ .layout{grid-template-columns:minmax(0,1fr) 322px;gap:20px} }
+
+  /* ---------- viewport ---------- */
+  .frame{position:relative;width:100%;aspect-ratio:4/3;background:#000;
+    border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
   .frame video,.frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   /* contain, not fill: in full screen the frame stops matching the video's
      aspect, and the overlay is mapped through the same letterboxed rect. */
-  .frame video{object-fit:contain;background:#000;filter:grayscale(1) contrast(1.06) brightness(1.04)}
+  .frame video{object-fit:contain;background:#000;
+    filter:grayscale(1) contrast(1.06) brightness(1.04)}
   .frame.plain video{filter:none}
   .frame.fs,.frame:fullscreen{position:fixed;inset:0;width:100vw;height:100vh;
     max-height:none;aspect-ratio:auto!important;border:0;border-radius:0;
     background:#000;z-index:60}
-  .exitfs{position:absolute;top:10px;right:10px;z-index:2;display:none;
-    font:500 12px var(--sans);padding:7px 12px;border-radius:3px;
-    border:1px solid rgba(215,224,232,.35);background:rgba(11,15,20,.72);
-    color:var(--text);cursor:pointer}
+  .exitfs{position:absolute;top:12px;right:12px;z-index:2;display:none;
+    font:500 12.5px var(--sans);padding:8px 14px;border-radius:var(--r-ctl);
+    border:1px solid rgba(244,244,245,.22);background:rgba(9,9,11,.66);
+    backdrop-filter:blur(8px);color:var(--text);cursor:pointer}
   .frame.fs .exitfs,.frame:fullscreen .exitfs{display:block}
-  .hint{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
-    align-items:center;justify-content:center;text-align:center;padding:24px;
-    color:var(--dim);font-size:13px;background:var(--panel)}
-  .hint .big{font:11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
-  .hint p{margin:0;max-width:36ch}
 
-  .chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;min-height:26px;margin-bottom:10px}
-  .chip{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
-    padding:6px 9px;border-radius:2px;background:rgba(46,211,198,.14);
-    border:1px solid var(--accent);color:var(--accent)}
-  .chip.warn{background:rgba(245,165,36,.13);border-color:#F5A524;color:#F5A524}
-  .chips .empty{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
-    color:var(--dim);padding:6px 0;opacity:.6}
+  .hint{position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;
+    align-items:center;justify-content:center;text-align:center;padding:28px;
+    background:var(--surface)}
+  .hint .big{font:500 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent)}
+  .hint .big.err{color:var(--danger)}
+  .hint p{margin:0;max-width:38ch;font-size:13.5px;color:var(--muted);line-height:1.6}
 
-  .readout{flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
-    background:var(--line);border:1px solid var(--line);border-radius:4px;overflow:hidden}
-  .tile{background:var(--panel);padding:9px 10px 10px;min-width:0}
-  .k{font:9px/1.4 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--dim);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .v{font:500 19px/1.2 var(--mono);font-variant-numeric:tabular-nums;margin-top:3px}
-  #vAction{font-size:14px;font-weight:600;letter-spacing:.02em;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .none{color:var(--dim)}
-  @media (max-width:560px){.readout{grid-template-columns:repeat(2,1fr)}.v{font-size:17px}}
+  /* ---------- toolbar ---------- */
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px}
+  .seg{display:flex;gap:0}
+  .seg .btn{border-radius:0;margin-left:-1px}
+  .seg .btn:first-child{border-radius:var(--r-ctl) 0 0 var(--r-ctl);margin-left:0}
+  .seg .btn:last-child{border-radius:0 var(--r-ctl) var(--r-ctl) 0}
+  .btn{font:500 13px var(--sans);height:38px;padding:0 14px;border-radius:var(--r-ctl);
+    border:1px solid var(--border);background:var(--surface);color:var(--text);
+    cursor:pointer;white-space:nowrap;
+    transition:background .14s ease,border-color .14s ease,color .14s ease}
+  .btn:hover:not(:disabled){background:var(--surface-2);border-color:#2E2E37}
+  .btn:active:not(:disabled){background:var(--surface-3)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);
+    color:var(--accent-ink);font-weight:600;padding-inline:18px}
+  .btn.primary:hover:not(:disabled){background:#3FE3CF;border-color:#3FE3CF}
+  .btn[aria-pressed="true"]{color:var(--accent);border-color:rgba(45,212,191,.42);
+    background:rgba(45,212,191,.10);position:relative;z-index:1}
 
-  .controls{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-block:12px}
-  button{font:500 13px var(--sans);padding:9px 15px;border-radius:3px;
-    border:1px solid var(--line);background:var(--panel-2);color:var(--text);cursor:pointer;
-    transition:border-color .15s,background .15s}
-  button:hover:not(:disabled){border-color:var(--dim)}
-  button:disabled{opacity:.38;cursor:not-allowed}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#04231F;font-weight:600}
-  button.primary:hover:not(:disabled){background:#3EE4D6;border-color:#3EE4D6}
-  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
-  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* ---------- rail ---------- */
+  .rail{display:grid;gap:12px}
+  .card{background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:15px 16px}
+  .label{display:block;font:500 10px var(--mono);letter-spacing:.13em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:9px}
 
-  .aux{flex:0 0 auto;border:1px solid var(--line);border-radius:4px;
-    background:var(--panel);margin-bottom:10px;padding:9px 11px;display:none}
+  #vAction{font:600 25px/1.15 var(--sans);letter-spacing:-.02em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #vAction.none{color:var(--faint)}
+  .metaline{display:flex;gap:16px;margin-top:11px;padding-top:11px;
+    border-top:1px solid var(--border-soft);
+    font:11px var(--mono);color:var(--faint);letter-spacing:.02em}
+  .metaline b{font-weight:500;color:var(--text);font-variant-numeric:tabular-nums}
+  #vSince,#vCount,#vMs{font-weight:500;color:var(--text);font-variant-numeric:tabular-nums}
+  #vSince.none,#vCount.none,#vMs.none{color:var(--faint)}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font:500 10.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;
+    padding:5px 9px;border-radius:6px;background:rgba(45,212,191,.10);
+    border:1px solid rgba(45,212,191,.34);color:var(--accent)}
+  .chip.warn{background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.34);color:var(--warn)}
+  .chips .empty{font:500 10.5px var(--mono);letter-spacing:.09em;
+    text-transform:uppercase;color:var(--faint);padding:5px 0}
+
+  /* gesture panel — ids and inner classes are written by the JS */
+  .aux{display:none}
   .aux.on{display:block}
-  .aux h4{margin:0 0 7px;font:9px/1.3 var(--mono);letter-spacing:.13em;
-    text-transform:uppercase;color:#F5A524;display:flex;justify-content:space-between;gap:8px}
-  .aux h4 em{font-style:normal;color:var(--dim);letter-spacing:.06em}
-  .aux .row{display:flex;align-items:center;gap:8px;margin:4px 0;font:12px var(--mono)}
-  .aux .bar{flex:1 1 auto;height:6px;border-radius:2px;background:var(--panel-2);overflow:hidden}
-  .aux .bar i{display:block;height:100%;background:#F5A524}
-  .aux .pct{width:4.2em;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
-  .aux .lbl{width:11em;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .aux .msg{color:var(--dim);font-size:12px}
-  .actions{flex:0 0 auto;border:1px solid var(--line);border-radius:4px;
-    background:var(--panel);margin-bottom:10px}
-  .actions summary{cursor:pointer;padding:9px 11px;font:10px/1.3 var(--mono);
-    letter-spacing:.13em;text-transform:uppercase;color:var(--accent);list-style:none}
+  .aux h4{margin:0 0 11px;font:500 10px var(--mono);letter-spacing:.13em;
+    text-transform:uppercase;color:var(--warn);
+    display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .aux h4 em{font-style:normal;color:var(--faint);letter-spacing:.04em;
+    text-transform:none;font-size:10px;text-align:right}
+  .aux .row{display:flex;align-items:center;gap:9px;margin:7px 0;font:11.5px var(--mono)}
+  .aux .lbl{width:8.6em;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--text)}
+  .aux .bar{flex:1 1 auto;height:4px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+  .aux .bar i{display:block;height:100%;border-radius:99px;background:var(--warn);
+    transition:width .18s ease}
+  .aux .pct{width:3.9em;text-align:right;color:var(--faint);font-variant-numeric:tabular-nums}
+  .aux .msg{color:var(--faint);font-size:12.5px;line-height:1.55}
+  .aux .msg.err{color:var(--danger)}
+
+  /* reference list */
+  .actions{background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);overflow:hidden}
+  .actions summary{cursor:pointer;padding:14px 16px;list-style:none;
+    font:500 10px var(--mono);letter-spacing:.13em;text-transform:uppercase;
+    color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .actions summary:hover{color:var(--text)}
   .actions summary::-webkit-details-marker{display:none}
-  .actions summary::after{content:' +';color:var(--dim)}
-  .actions[open] summary::after{content:' \2212';color:var(--dim)}
-  .actions .body{padding:0 11px 11px;display:grid;gap:10px;
-    grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
-  .actions h3{margin:0 0 5px;font:9px/1.3 var(--mono);letter-spacing:.13em;
-    text-transform:uppercase;color:var(--dim)}
-  .actions ul{margin:0;padding-left:15px;font-size:12px;color:var(--text)}
-  .actions li{margin:1px 0}
-  .actions li span{color:var(--dim)}
-  .note{flex:0 0 auto;font-size:11.5px;color:var(--dim);
-    padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
-  .note b{color:var(--text);font-weight:500}
+  .actions summary::after{content:"+";font:400 15px var(--mono);color:var(--faint)}
+  .actions[open] summary::after{content:"\2212"}
+  .actions[open] summary{border-bottom:1px solid var(--border-soft)}
+  .actions .body{padding:14px 16px 16px;display:grid;gap:15px}
+  .actions h3{margin:0 0 7px;font:500 9.5px var(--mono);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--faint)}
+  .actions ul{margin:0;padding:0;list-style:none;font-size:12.5px}
+  .actions li{margin:3px 0;color:var(--text);line-height:1.5}
+  .actions li span{color:var(--faint)}
+
+  .note{font-size:12px;line-height:1.65;color:var(--faint);
+    padding:2px 2px 0}
+  .note b{color:var(--muted);font-weight:500}
   .note a{color:var(--accent);text-decoration:none}
-  .err{color:var(--bad)}
+  .note a:hover{text-decoration:underline}
+  .note .err{color:var(--danger)}
+  .err{color:var(--danger)}
 </style>
 </head>
 <body>
-<div id="app">
-  <header>
-    <div class="mark"></div>
-    <div class="hgroup">
-      <h1>Action Detector</h1>
-      <div class="sub">Pose landmarks &middot; 33 keypoints per person</div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Action Detector</h1>
+        <p class="tag">On-device pose and gesture analysis</p>
+      </div>
     </div>
-    <div class="beacon" id="beacon"><span class="dot"></span><span id="beaconTxt">Offline</span></div>
+    <div class="status" id="beacon"><i class="dot"></i><span id="beaconTxt">Offline</span></div>
   </header>
 
-  <div class="stage">
-    <div class="frame plain" id="frame">
-      <video id="vid" playsinline muted autoplay></video>
-      <canvas id="ov"></canvas>
-      <button class="exitfs" id="btnExitFs" type="button">Exit full screen</button>
-      <div class="hint" id="hint">
-        <div class="big" id="hintBig">Loading model</div>
-        <p id="hintTxt">Downloading the pose model (~6&nbsp;MB). This happens once, then it is cached.</p>
+  <main class="layout">
+    <section>
+      <div class="frame plain" id="frame">
+        <video id="vid" playsinline muted autoplay></video>
+        <canvas id="ov"></canvas>
+        <button class="exitfs" id="btnExitFs" type="button">Exit full screen</button>
+        <div class="hint" id="hint">
+          <div class="big" id="hintBig">Loading model</div>
+          <p id="hintTxt">Downloading the pose model (~6&nbsp;MB). This happens once, then it is cached.</p>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <div class="chips" id="chips"><span class="empty">No signals</span></div>
-
-  <div class="aux" id="aux">
-    <h4><span>MediaPipe gestures &middot; trained classifier</span><em id="auxMeta">&mdash;</em></h4>
-    <div id="auxBody"><div class="msg">Loading&hellip;</div></div>
-  </div>
-
-  <div class="readout">
-    <div class="tile"><div class="k">People</div><div class="v none" id="vCount">&mdash;</div></div>
-    <div class="tile"><div class="k">Top action</div><div class="v none" id="vAction">&mdash;</div></div>
-    <div class="tile"><div class="k">Held for</div><div class="v none" id="vSince">--:--</div></div>
-    <div class="tile"><div class="k">Inference</div><div class="v none" id="vMs">-- ms</div></div>
-  </div>
-
-  <div class="controls">
-    <button class="primary" id="btnStart" disabled>Start camera</button>
-    <button id="btnFlip" disabled>Flip</button>
-    <button id="btnGray" aria-pressed="false">Grayscale</button>
-    <button id="btnSkel" aria-pressed="true">Skeleton</button>
-    <button id="btnFull">Full screen</button>
-    <button id="btnGest" aria-pressed="false">Gestures (8&nbsp;MB)</button>
-  </div>
-
-  <details class="actions">
-    <summary>Detectable actions (13 + 7 gestures)</summary>
-    <div class="body">
-      <div>
-        <h3>Needs hips &amp; knees in frame</h3>
-        <ul>
-          <li>Standing <span>&mdash; upright, knees extended</span></li>
-          <li>Walking <span>&mdash; upright with hip travel</span></li>
-          <li>Sitting <span>&mdash; knees bent, hips at knee height</span></li>
-          <li>Crouching <span>&mdash; knees bent, hips below</span></li>
-          <li>Bending over <span>&mdash; torso tilted forward</span></li>
-          <li>Lying down <span>&mdash; torso near horizontal</span></li>
-        </ul>
+      <div class="toolbar">
+        <button class="btn primary" id="btnStart" disabled>Start camera</button>
+        <div class="seg">
+          <button class="btn" id="btnFlip" disabled>Flip</button>
+          <button class="btn" id="btnFull">Full screen</button>
+        </div>
+        <div class="seg">
+          <button class="btn" id="btnGray" aria-pressed="false">Grayscale</button>
+          <button class="btn" id="btnSkel" aria-pressed="true">Skeleton</button>
+          <button class="btn" id="btnGest" aria-pressed="false">Gestures</button>
+        </div>
       </div>
-      <div>
-        <h3>Upper body is enough</h3>
-        <ul>
-          <li>Arms raised <span>&mdash; both wrists above shoulders</span></li>
-          <li>One arm raised</li>
-          <li>Reaching out <span>&mdash; elbow straight, arm out</span></li>
-          <li>Hand to head</li>
-          <li>Leaning <span>&mdash; shoulder line tilted</span></li>
-          <li>Moving <span>&mdash; shoulder-centre velocity</span></li>
-          <li>Still <span>&mdash; no motion, arms at rest</span></li>
-        </ul>
-      </div>
-      <div>
-        <h3>Trained gesture model &mdash; press Gestures</h3>
-        <ul>
-          <li>Thumb up / Thumb down</li>
-          <li>Open palm / Closed fist</li>
-          <li>Victory / Pointing up</li>
-          <li>I love you</li>
-        </ul>
-      </div>
-    </div>
-  </details>
+    </section>
 
-  <div class="note" id="note">
-    Actions are derived from <b>joint geometry</b>. Works with only the upper body in frame &mdash;
-    posture actions are suppressed when hips and knees are not visible.
-    <br><a href="motion.html">&rarr; Motion-only version (no model download)</a>
-  </div>
+    <aside class="rail">
+      <div class="card">
+        <span class="label">Current action</span>
+        <div id="vAction" class="none">&mdash;</div>
+        <div class="metaline">
+          <span>Held <b id="vSince" class="none">--:--</b></span>
+          <span><b id="vCount" class="none">&mdash;</b> tracked</span>
+          <span><b id="vMs" class="none">-- ms</b></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="label">Signals</span>
+        <div class="chips" id="chips"><span class="empty">No signals</span></div>
+      </div>
+
+      <div class="card aux" id="aux">
+        <h4><span>Gesture classifier</span><em id="auxMeta">&mdash;</em></h4>
+        <div id="auxBody"><div class="msg">Loading&hellip;</div></div>
+      </div>
+
+      <details class="actions">
+        <summary>Detectable actions (13 + 7 gestures)</summary>
+        <div class="body">
+          <div>
+            <h3>Needs hips &amp; knees in frame</h3>
+            <ul>
+              <li>Standing <span>&mdash; upright, knees extended</span></li>
+              <li>Walking <span>&mdash; upright with hip travel</span></li>
+              <li>Sitting <span>&mdash; knees bent, hips at knee height</span></li>
+              <li>Crouching <span>&mdash; knees bent, hips below</span></li>
+              <li>Bending over <span>&mdash; torso tilted forward</span></li>
+              <li>Lying down <span>&mdash; torso near horizontal</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Upper body is enough</h3>
+            <ul>
+              <li>Arms raised <span>&mdash; both wrists above shoulders</span></li>
+              <li>One arm raised</li>
+              <li>Reaching out <span>&mdash; elbow straight, arm out</span></li>
+              <li>Hand to head</li>
+              <li>Leaning <span>&mdash; shoulder line tilted</span></li>
+              <li>Moving <span>&mdash; shoulder-centre velocity</span></li>
+              <li>Still <span>&mdash; no motion, arms at rest</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Trained gesture model</h3>
+            <ul>
+              <li>Thumb up / Thumb down</li>
+              <li>Open palm / Closed fist</li>
+              <li>Victory / Pointing up</li>
+              <li>I love you</li>
+            </ul>
+          </div>
+        </div>
+      </details>
+
+      <p class="note" id="note">
+        Actions are derived from <b>joint geometry</b>. Works with only the upper body
+        in frame &mdash; posture actions are suppressed when hips and knees are not visible.
+        <br><a href="motion.html">Motion-only version &rarr;</a>
+      </p>
+    </aside>
+  </main>
 </div>
 
 <script>
