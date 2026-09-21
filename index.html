@@ -340,7 +340,9 @@ const VIS=0.35,          // a landmark counts as visible above this
       SHOW_IN=0.35,      // a label appears above this smoothed score ...
       SHOW_OUT=0.20,     // ... and only disappears below this (hysteresis)
       STEAL=0.08,        // margin a challenger needs to take the top slot
-      HOLD=450;          // ms it must keep that margin before committing
+      HOLD=450,          // ms it must keep that margin before committing
+      MATCH_MAX=1.6,     // match radius, in body widths
+      KEEP=2000;         // ms a track survives without a detection
 
 try{
   const fileset = await FilesetResolver.forVisionTasks(
@@ -351,7 +353,7 @@ try{
       delegate:"GPU"
     },
     runningMode:"VIDEO",
-    numPoses:2,
+    numPoses:4,
     // low thresholds so a partially framed body still latches
     minPoseDetectionConfidence:0.3,
     minPosePresenceConfidence:0.3,
@@ -548,9 +550,10 @@ function angleAt(a,b,c){
 // MediaPipe extrapolates landmarks past the edge of the picture and keeps
 // their visibility moderately high, so visibility alone reports knees that
 // are actually below the bottom of the frame. Bounds must be checked too.
+function inBounds(l){ return l.x>-0.02 && l.x<1.02 && l.y>-0.02 && l.y<1.02; }
 function inShot(l){
   const v=(l.visibility===undefined?1:l.visibility);
-  return v>0.5 && l.x>-0.02 && l.x<1.02 && l.y>-0.02 && l.y<1.02;
+  return v>0.5 && inBounds(l);
 }
 function partsOf(lm){
   const hips = inShot(lm[HIP_L])||inShot(lm[HIP_R]);
@@ -635,23 +638,46 @@ function classify(lm, ar, motion, parts, torsoLen){
 
 // ---- tracking, smoothing, label commitment -----------------------------
 function track(lmSets, ar, t){
-  const out=[], used=new Set();
+  const out=[];
 
-  for(const rawLm of lmSets){
-    // Always the shoulder midpoint. Switching anchor on hip visibility made
-    // it teleport between chest and waist whenever hips flickered, which read
-    // as a large velocity and pinned the label to Walking.
-    const aRaw = mid(P(rawLm[SH_L],ar),P(rawLm[SH_R],ar));
+  // Describe every detection once, with its own body scale.
+  const dets = lmSets.map(lm=>{
+    const a=P(lm[SH_L],ar), b=P(lm[SH_R],ar);
+    return {lm, anchor:mid(a,b),
+            scale:Math.max(1e-4, Math.hypot(a.x-b.x, a.y-b.y)*1.45)};
+  });
 
-    let tr=null, bestD=0.30;
-    for(const c of tracks){
-      if(used.has(c.id)) continue;
-      const d=Math.hypot(c.anchor.x-aRaw.x, c.anchor.y-aRaw.y);
-      if(d<bestD){ bestD=d; tr=c; }
+  // Global best-first assignment. The previous matcher was greedy in the order
+  // MediaPipe happened to return poses, and that order is not stable between
+  // frames, so with two people in shot one could claim the other's track and
+  // inherit its smoothing, history and label — the main cause of the flicker.
+  // Distance is measured in body widths so it holds at any camera distance,
+  // and each track is projected forward by its own velocity first.
+  const pairs=[];
+  for(let di=0; di<dets.length; di++){
+    for(let ti=0; ti<tracks.length; ti++){
+      const c=tracks[ti], lead=Math.min(0.4,Math.max(0,(t-c.t)/1000));
+      const px=c.anchor.x + (c.vel?c.vel.x*lead:0);
+      const py=c.anchor.y + (c.vel?c.vel.y*lead:0);
+      const d=Math.hypot(px-dets[di].anchor.x, py-dets[di].anchor.y)/dets[di].scale;
+      if(d<MATCH_MAX) pairs.push([d,di,ti]);
     }
+  }
+  pairs.sort((a,b)=>a[0]-b[0]);
+  const assigned=new Map(), claimed=new Set();
+  for(const [,di,ti] of pairs){
+    if(assigned.has(di)||claimed.has(ti)) continue;
+    assigned.set(di,tracks[ti]); claimed.add(ti);
+  }
+
+  const used=new Set();
+  for(let di=0; di<dets.length; di++){
+    const det=dets[di], rawLm=det.lm;
+    let tr=assigned.get(di);
     if(!tr){
-      tr={id:nextId++, anchor:aRaw, t, motion:undefined, sm:null, sc:{}, shown:{},
-          hist:[], lowerConf:null, label:null, cand:null, candAt:t, since:t};
+      tr={id:nextId++, anchor:det.anchor, t, motion:undefined, sm:null, sc:{},
+          shown:{}, hist:[], lowerConf:null, label:null, cand:null, candAt:t,
+          since:t, vel:{x:0,y:0}, vset:null, box:null};
       tracks.push(tr);
     }
     used.add(tr.id);
@@ -664,14 +690,23 @@ function track(lmSets, ar, t){
       tr.sm=rawLm.map(l=>({x:l.x, y:l.y, visibility:l.visibility===undefined?1:l.visibility}));
     }else{
       for(let i=0;i<rawLm.length;i++){
-        const s=tr.sm[i], r=rawLm[i];
-        const a=clamp(0.22+Math.hypot(r.x-s.x, r.y-s.y)*14, 0.22, 0.90);
-        s.x+=(r.x-s.x)*a; s.y+=(r.y-s.y)*a;
+        const sm=tr.sm[i], r=rawLm[i];
+        const a=clamp(0.22+Math.hypot(r.x-sm.x, r.y-sm.y)*14, 0.22, 0.90);
+        sm.x+=(r.x-sm.x)*a; sm.y+=(r.y-sm.y)*a;
         const rv=r.visibility===undefined?1:r.visibility;
-        s.visibility+=(rv-s.visibility)*0.25;
+        sm.visibility+=(rv-sm.visibility)*0.25;
       }
     }
     const lm=tr.sm, seen=partsOf(lm);
+
+    // Which landmarks count towards the box, with hysteresis: a joint must be
+    // clearly there to join the set but only clearly gone to leave it. Without
+    // this the set churns as joints graze the threshold and the box jumps.
+    if(!tr.vset) tr.vset=new Uint8Array(lm.length);
+    for(let i=0;i<lm.length;i++){
+      const ok=inBounds(lm[i]), v=lm[i].visibility;
+      tr.vset[i] = tr.vset[i] ? (ok && v>0.35 ? 1 : 0) : (ok && v>0.55 ? 1 : 0);
+    }
 
     // Hold the full-body/upper-body decision steady rather than letting one
     // marginal frame swap the whole action set.
@@ -681,6 +716,11 @@ function track(lmSets, ar, t){
 
     const torsoLen = bodyScale(lm, ar, parts);
     const anchor = mid(P(lm[SH_L],ar),P(lm[SH_R],ar));
+
+    if(dt>0.008){
+      const vx=(anchor.x-tr.anchor.x)/dt, vy=(anchor.y-tr.anchor.y)/dt;
+      tr.vel.x=tr.vel.x*0.7+vx*0.3; tr.vel.y=tr.vel.y*0.7+vy*0.3;
+    }
 
     // Limb positions relative to the body centre, in torso units, so they are
     // unaffected by where the person is or how near the camera they stand.
@@ -708,10 +748,10 @@ function track(lmSets, ar, t){
     const withLim=tr.hist.filter(h=>h.lim);
     if(parts.lower && withLim.length>3){
       let sum=0;
-      for(let j=0;j<4;j++){
+      for(let k=0;k<4;k++){
         let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
         for(const h of withLim){
-          const q=h.lim[j];
+          const q=h.lim[k];
           if(q[0]<mnx)mnx=q[0]; if(q[0]>mxx)mxx=q[0];
           if(q[1]<mny)mny=q[1]; if(q[1]>mxy)mxy=q[1];
         }
@@ -720,14 +760,33 @@ function track(lmSets, ar, t){
       gaitAmp=sum/4;
     }
 
-    // Each cue mapped to 0..1 and combined by strongest, so any one of them
-    // is enough to call motion.
     const motionNow=Math.max(
       ramp(vTrans ,0.35,1.20),
       ramp(vScale ,0.12,0.45),
       parts.lower ? ramp(gaitAmp,0.28,0.80) : 0);
     tr.motion = tr.motion===undefined ? motionNow : tr.motion+(motionNow-tr.motion)*0.30;
     tr.anchor=anchor; tr.t=t;
+
+    // Smooth the box itself. Even with smoothed landmarks the *set* feeding
+    // the extents changes, so the raw box jumps; this glides through jitter
+    // and still snaps when the person genuinely moves.
+    let bx0=1,by0=1,bx1=0,by1=0,any=false;
+    for(let i=0;i<lm.length;i++){
+      if(!tr.vset[i]) continue;
+      any=true;
+      if(lm[i].x<bx0)bx0=lm[i].x; if(lm[i].x>bx1)bx1=lm[i].x;
+      if(lm[i].y<by0)by0=lm[i].y; if(lm[i].y>by1)by1=lm[i].y;
+    }
+    if(any){
+      if(!tr.box) tr.box={x0:bx0,y0:by0,x1:bx1,y1:by1};
+      else{
+        const shift=Math.max(Math.abs(bx0-tr.box.x0),Math.abs(bx1-tr.box.x1),
+                             Math.abs(by0-tr.box.y0),Math.abs(by1-tr.box.y1));
+        const a=clamp(0.12+shift*7,0.12,0.85);
+        tr.box.x0+=(bx0-tr.box.x0)*a; tr.box.x1+=(bx1-tr.box.x1)*a;
+        tr.box.y0+=(by0-tr.box.y0)*a; tr.box.y1+=(by1-tr.box.y1)*a;
+      }
+    }
 
     // smooth each score so the percentages stop twitching
     const raw=classify(lm, ar, tr.motion, parts, torsoLen);
@@ -767,10 +826,11 @@ function track(lmSets, ar, t){
     if(tr.sc['Leaning']>0.5) flags.push('Leaning');
     if(tr.motion>0.50) flags.push('Moving');
 
-    out.push({lm, id:tr.id, label:tr.label, since:tr.since, display, flags, parts});
+    out.push({lm, id:tr.id, label:tr.label, since:tr.since, display, flags, parts,
+              box:tr.box, vset:tr.vset});
   }
 
-  tracks=tracks.filter(c=>used.has(c.id)||t-c.t<1500);
+  tracks=tracks.filter(c=>used.has(c.id)||t-c.t<KEEP);
   return out;
 }
 
@@ -821,13 +881,12 @@ function draw(){
   const f=fitRect(W,H,vidAR);
 
   for(const p of people){
-    const pts=p.lm.map(l=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h, v:l.visibility,
-                            ok:l.visibility>VIS && inShot(l)}));
+    const pts=p.lm.map((l,i)=>({x:f.ox+l.x*f.w, y:f.oy+l.y*f.h,
+                                v:l.visibility, ok:p.vset[i]===1}));
 
-    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
-    for(const q of pts){ if(!q.ok) continue;
-      if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
-    if(x1<x0) continue;
+    if(!p.box) continue;
+    let x0=f.ox+p.box.x0*f.w, x1=f.ox+p.box.x1*f.w,
+        y0=f.oy+p.box.y0*f.h, y1=f.oy+p.box.y1*f.h;
     const padX=(x1-x0)*0.14, padY=(y1-y0)*0.07;
     x0=Math.max(f.ox,x0-padX); x1=Math.min(f.ox+f.w,x1+padX);
     y0=Math.max(f.oy,y0-padY*2.2); y1=Math.min(f.oy+f.h,y1+padY);
