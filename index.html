@@ -92,6 +92,18 @@
   button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
+  .movi{flex:0 0 auto;border:1px solid var(--line);border-radius:4px;
+    background:var(--panel);margin-bottom:10px;padding:9px 11px;display:none}
+  .movi.on{display:block}
+  .movi h4{margin:0 0 7px;font:9px/1.3 var(--mono);letter-spacing:.13em;
+    text-transform:uppercase;color:#A78BFA;display:flex;justify-content:space-between;gap:8px}
+  .movi h4 em{font-style:normal;color:var(--dim);letter-spacing:.06em}
+  .movi .row{display:flex;align-items:center;gap:8px;margin:4px 0;font:12px var(--mono)}
+  .movi .bar{flex:1 1 auto;height:6px;border-radius:2px;background:var(--panel-2);overflow:hidden}
+  .movi .bar i{display:block;height:100%;background:#A78BFA}
+  .movi .pct{width:4.2em;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  .movi .lbl{width:11em;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .movi .msg{color:var(--dim);font-size:12px}
   .actions{flex:0 0 auto;border:1px solid var(--line);border-radius:4px;
     background:var(--panel);margin-bottom:10px}
   .actions summary{cursor:pointer;padding:9px 11px;font:10px/1.3 var(--mono);
@@ -138,6 +150,11 @@
 
   <div class="chips" id="chips"><span class="empty">No signals</span></div>
 
+  <div class="movi" id="movi">
+    <h4><span>MoViNet A0 &middot; Kinetics-600</span><em id="moviMeta">&mdash;</em></h4>
+    <div id="moviBody"><div class="msg">Loading&hellip;</div></div>
+  </div>
+
   <div class="readout">
     <div class="tile"><div class="k">People</div><div class="v none" id="vCount">&mdash;</div></div>
     <div class="tile"><div class="k">Top action</div><div class="v none" id="vAction">&mdash;</div></div>
@@ -151,6 +168,7 @@
     <button id="btnGray" aria-pressed="false">Grayscale</button>
     <button id="btnSkel" aria-pressed="true">Skeleton</button>
     <button id="btnFull">Full screen</button>
+    <button id="btnMovi" aria-pressed="false">MoViNet (16&nbsp;MB)</button>
   </div>
 
   <details class="actions">
@@ -212,7 +230,8 @@ const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
       hint=$('hint'), hintBig=$('hintBig'), hintTxt=$('hintTxt'),
       btnStart=$('btnStart'), btnFlip=$('btnFlip'),
       btnGray=$('btnGray'), btnSkel=$('btnSkel'),
-      btnFull=$('btnFull'), btnExitFs=$('btnExitFs'),
+      btnFull=$('btnFull'), btnExitFs=$('btnExitFs'), btnMovi=$('btnMovi'),
+      movi=$('movi'), moviBody=$('moviBody'), moviMeta=$('moviMeta'),
       beacon=$('beacon'), beaconTxt=$('beaconTxt'),
       note=$('note'), chips=$('chips');
 
@@ -303,6 +322,114 @@ btnExitFs.addEventListener('click',toggleFull);
 document.addEventListener('fullscreenchange',()=>{ syncFull(); requestAnimationFrame(size); });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && frame.classList.contains('fs')) toggleFull();
+});
+
+// ---- MoViNet ----------------------------------------------------------
+// A real trained video classifier, run alongside the geometry heuristics so
+// the two can be compared on the same feed.
+//
+// The streaming build takes 47 inputs: the image plus 46 internal state
+// tensors, yet emits only 27 state outputs. The 16 cumulative-pool states
+// pair 1:1 by shape and order, but the spatial buffers do not — [1,184,11,11]
+// has 16 inputs against 6 outputs, so blocks carry different buffer depths
+// and the wiring cannot be recovered from shapes alone. Feeding state back
+// incorrectly would not fail loudly, it would yield confident nonsense, so
+// state is held at zero — exactly what the model sees on a stream's first
+// frame — and temporal stability comes from averaging predictions over a
+// window instead of from the model's own memory.
+const MOVINET_URL='https://huggingface.co/litert-community/MoViNet-A0-Stream-LiteRT/resolve/main/movinet_a0_stream.tflite';
+const TFJS='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+const TFLITE='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/dist/tf-tflite.min.js';
+const TFLITE_WASM='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/wasm/';
+
+let mvModel=null, mvZeros=null, mvLabels=null, mvOn=false, mvBusy=false,
+    mvEma=null, mvMs=0, mvTick=0, mvTop=[];
+
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const el=document.createElement('script');
+    el.src=src; el.onload=()=>res(); el.onerror=()=>rej(new Error('could not load '+src));
+    document.head.appendChild(el);
+  });
+}
+
+function moviMsg(html,cls){ moviBody.innerHTML='<div class="msg'+(cls?' '+cls:'')+'">'+html+'</div>'; }
+
+async function initMovinet(){
+  moviMsg('Loading runtime&hellip;');
+  if(!window.tf)     await loadScript(TFJS);
+  if(!window.tflite) await loadScript(TFLITE);
+  tflite.setWasmPath(TFLITE_WASM);
+
+  moviMsg('Downloading model, 16&nbsp;MB&hellip; cached after this.');
+  mvModel = await tflite.loadTFLiteModel(MOVINET_URL);
+
+  // 46 constant zero state tensors, built once and reused every frame
+  mvZeros = mvModel.inputs.slice(1).map(t=>tf.zeros(t.shape,'float32'));
+
+  const txt = await (await fetch('kinetics600.txt')).text();
+  mvLabels = txt.split('\n').map(x=>x.trim()).filter(Boolean);
+  mvEma = new Float32Array(mvLabels.length);
+  moviMsg('Ready. Start the camera.');
+}
+
+async function movinetStep(){
+  if(mvBusy || !mvModel || !running || vid.readyState<2) return;
+  mvBusy=true;
+  let img=null, outs=null;
+  try{
+    // NCHW float [0,1] at 172x172 — this port follows the PyTorch convention
+    img = tf.tidy(()=> tf.browser.fromPixels(vid)
+      .resizeBilinear([172,172]).toFloat().div(255)
+      .transpose([2,0,1]).expandDims(0));
+    const t0=performance.now();
+    outs = mvModel.predict([img, ...mvZeros]);
+    const arr = Array.isArray(outs) ? outs : (outs && outs.shape ? [outs] : Object.values(outs||{}));
+    const logits = arr.find(t=>t.shape && t.shape[t.shape.length-1]===mvLabels.length) || arr[0];
+    const probs = tf.tidy(()=>tf.softmax(tf.reshape(logits,[-1])));
+    const data = await probs.data();
+    probs.dispose();
+    mvMs = mvMs ? mvMs*0.8 + (performance.now()-t0)*0.2 : (performance.now()-t0);
+
+    // Averaging over a window is where temporal stability comes from here,
+    // since the model's own memory is not in play.
+    for(let i=0;i<data.length;i++) mvEma[i] = mvEma[i]*0.80 + data[i]*0.20;
+    const idx=[...mvEma.keys()].sort((a,b)=>mvEma[b]-mvEma[a]).slice(0,3);
+    mvTop = idx.map(i=>[mvLabels[i], mvEma[i]]);
+    renderMovi();
+    arr.forEach(t=>t.dispose && t.dispose());
+  }catch(e){
+    moviMsg('Inference failed: '+(e&&e.message||e),'err'); console.error(e); mvOn=false;
+  }finally{
+    if(img) img.dispose();
+    mvBusy=false;
+  }
+}
+
+function renderMovi(){
+  moviMeta.textContent = Math.round(mvMs)+' ms · single frame, no temporal state';
+  moviBody.innerHTML = mvTop.map(([name,pv])=>
+    '<div class="row"><span class="lbl">'+name+'</span>'+
+    '<span class="bar"><i style="width:'+(pv*100).toFixed(1)+'%"></i></span>'+
+    '<span class="pct">'+(pv*100).toFixed(1)+'%</span></div>').join('');
+}
+
+btnMovi.addEventListener('click',async()=>{
+  if(mvOn){
+    mvOn=false; btnMovi.setAttribute('aria-pressed','false');
+    movi.classList.remove('on'); return;
+  }
+  mvOn=true; btnMovi.setAttribute('aria-pressed','true');
+  movi.classList.add('on');
+  if(!mvModel){
+    btnMovi.disabled=true;
+    try{ await initMovinet(); }
+    catch(e){
+      moviMsg('Could not load MoViNet: '+(e&&e.message||e),'err');
+      mvOn=false; btnMovi.setAttribute('aria-pressed','false');
+    }
+    btnMovi.disabled=false;
+  }
 });
 
 async function start(){
@@ -608,6 +735,8 @@ function loop(ts){
     const ar=(vid.videoWidth||4)/(vid.videoHeight||3);
     vidAR=ar;
     people=track((res&&res.landmarks)||[], ar, performance.now());
+    // ~10 Hz is plenty for a classifier averaged over a window
+    if(mvOn && mvModel && (++mvTick % 3 === 0)) movinetStep();
   }
   draw(); readouts();
   requestAnimationFrame(loop);
@@ -692,6 +821,16 @@ function draw(){
       ctx.fillStyle='#F5A524';
       ctx.fillText('UPPER BODY',x0+1,Math.min(f.oy+f.h-3,y1+11));
     }
+  }
+
+  if(mvOn && mvTop.length){
+    const txt='MOVINET  '+mvTop[0][0].toUpperCase()+'  '+(mvTop[0][1]*100).toFixed(1)+'%';
+    ctx.font='600 11px '+mono;
+    const tw=ctx.measureText(txt).width;
+    ctx.fillStyle='rgba(167,139,250,.92)';
+    ctx.fillRect(f.ox+6,f.oy+6,tw+12,18);
+    ctx.fillStyle='#14091F';
+    ctx.fillText(txt,f.ox+12,f.oy+19);
   }
 
   ctx.font='500 10px '+mono;
