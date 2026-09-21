@@ -209,11 +209,12 @@
           <button class="btn" id="btnFlip" disabled>Flip</button>
           <button class="btn" id="btnFull">Full screen</button>
         </div>
-        <div class="seg">
-          <button class="btn" id="btnGray" aria-pressed="false">Grayscale</button>
+        <div class="seg" role="group" aria-label="Overlays">
+          <button class="btn" id="btnBox"  aria-pressed="true">People box</button>
           <button class="btn" id="btnSkel" aria-pressed="true">Skeleton</button>
-          <button class="btn" id="btnGest" aria-pressed="false">Gestures</button>
+          <button class="btn" id="btnGest" aria-pressed="false">Hand gestures</button>
         </div>
+        <button class="btn" id="btnGray" aria-pressed="false">Grayscale</button>
       </div>
     </section>
 
@@ -307,7 +308,7 @@ const $ = id => document.getElementById(id);
 const vid=$('vid'), ov=$('ov'), ctx=ov.getContext('2d'), frame=$('frame'),
       hint=$('hint'), hintBig=$('hintBig'), hintTxt=$('hintTxt'),
       btnStart=$('btnStart'), btnFlip=$('btnFlip'),
-      btnGray=$('btnGray'), btnSkel=$('btnSkel'),
+      btnGray=$('btnGray'), btnSkel=$('btnSkel'), btnBox=$('btnBox'),
       btnFull=$('btnFull'), btnExitFs=$('btnExitFs'), btnGest=$('btnGest'),
       aux=$('aux'), auxBody=$('auxBody'), auxMeta=$('auxMeta'),
       beacon=$('beacon'), beaconTxt=$('beaconTxt'),
@@ -318,7 +319,7 @@ const BASE_NOTE = 'Actions are derived from <b>joint geometry</b>. Works with on
   '<br><a href="motion.html">→ Motion-only version (no model download)</a>';
 
 let landmarker=null, running=false, facing='environment', stream=null, lastVideoTime=-1;
-let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true, vidAR=4/3;
+let people=[], inferMs=0, fps=0, lastFrame=0, showSkel=true, showBox=true, vidAR=4/3;
 let tracks=[], nextId=1;
 
 const NOSE=0, EAR_L=7, EAR_R=8,
@@ -378,6 +379,10 @@ btnGray.addEventListener('click',()=>{
 btnSkel.addEventListener('click',()=>{
   showSkel = btnSkel.getAttribute('aria-pressed')!=='true';
   btnSkel.setAttribute('aria-pressed',String(showSkel));
+});
+btnBox.addEventListener('click',()=>{
+  showBox = btnBox.getAttribute('aria-pressed')!=='true';
+  btnBox.setAttribute('aria-pressed',String(showBox));
 });
 
 // iPhone Safari has no Element.requestFullscreen, so fall back to a
@@ -845,28 +850,30 @@ function draw(){
       ctx.globalAlpha=1;
     }
 
-    ctx.strokeStyle='#FF3B30'; ctx.lineWidth=2.5;
-    ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+    if(showBox){
+      ctx.strokeStyle='#FF3B30'; ctx.lineWidth=2.5;
+      ctx.strokeRect(x0,y0,x1-x0,y1-y0);
 
-    // committed label first, so these no longer re-rank every frame
-    ctx.font='600 12px '+sans;
-    const lh=18;
-    let ly=y0-p.display.length*lh-2;
-    if(ly<f.oy) ly=Math.min(y1+4,f.oy+f.h-p.display.length*lh-2);
-    p.display.forEach((d,i)=>{
-      const text=d[0]+': '+(d[1]*100).toFixed(1)+'%';
-      const tw=ctx.measureText(text).width;
-      const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-tw-12));
-      ctx.fillStyle=i===0?'#2E6BFF':'#FF3B30';
-      ctx.fillRect(lx,ly,tw+12,lh);
-      ctx.fillStyle='#fff'; ctx.fillText(text,lx+6,ly+13);
-      ly+=lh;
-    });
+      // committed label first, so these no longer re-rank every frame
+      ctx.font='600 12px '+sans;
+      const lh=18;
+      let ly=y0-p.display.length*lh-2;
+      if(ly<f.oy) ly=Math.min(y1+4,f.oy+f.h-p.display.length*lh-2);
+      p.display.forEach((d,i)=>{
+        const text=d[0]+': '+(d[1]*100).toFixed(1)+'%';
+        const tw=ctx.measureText(text).width;
+        const lx=Math.max(f.ox,Math.min(x0,f.ox+f.w-tw-12));
+        ctx.fillStyle=i===0?'#2E6BFF':'#FF3B30';
+        ctx.fillRect(lx,ly,tw+12,lh);
+        ctx.fillStyle='#fff'; ctx.fillText(text,lx+6,ly+13);
+        ly+=lh;
+      });
 
-    if(!p.parts.lower){
-      ctx.font='600 9px '+mono;
-      ctx.fillStyle='#F5A524';
-      ctx.fillText('UPPER BODY',x0+1,Math.min(f.oy+f.h-3,y1+11));
+      if(!p.parts.lower){
+        ctx.font='600 9px '+mono;
+        ctx.fillStyle='#F5A524';
+        ctx.fillText('UPPER BODY',x0+1,Math.min(f.oy+f.h-3,y1+11));
+      }
     }
   }
 
