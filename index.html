@@ -64,6 +64,7 @@
 
   /* ---------- viewport ---------- */
   .frame{position:relative;width:100%;aspect-ratio:4/3;background:#000;
+    max-height:min(66vh,620px);
     border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
   .frame video,.frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   /* contain, not fill: in full screen the frame stops matching the video's
